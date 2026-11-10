@@ -1,53 +1,68 @@
 /* =====================================================================
    FLUIER – aplicația (conturi, antrenament, asociații, teste, rapoarte)
-   Nu trebuie modificat nimic aici pentru a porni. Setările sunt în config.js.
+   Nu trebuie modificat nimic aici pentru a porni. Setările sunt în config.js,
+   textele interfeței în lang/ro.json (și lang/en.json pentru viitor).
    ===================================================================== */
-(function(){
+(async function(){
 "use strict";
 
 const CFG = window.FLUIER_CONFIG || {};
+await I18N.init("ro");                         // pornim în română; limba din profil se aplică după autentificare
+const t = (k, v) => I18N.t(k, v);
+if(t("app.loading")==="app.loading"){   // fișierele de traducere lipsesc
+  document.querySelector("#app").innerHTML = '<div class="notice warn"><b>Lipsește folderul <code>lang</code>.</b><br>Urcă pe GitHub și folderul <code>lang</code> (cu <code>ro.json</code> și <code>en.json</code>), lângă <code>index.html</code>.</div>';
+  return;
+}
+
+// numele legilor: se încarcă din tabelul `laws` (aici e doar rezerva, dacă tabelul lipsește)
 const LAWS = {1:"Terenul de joc",2:"Mingea",3:"Jucătorii",4:"Echipamentul jucătorilor",5:"Arbitrul",
   6:"Alți oficiali de meci",7:"Durata meciului",8:"Începerea și reluarea jocului",9:"Mingea în joc și afară din joc",
   10:"Stabilirea rezultatului meciului",11:"Ofsaidul",12:"Faulturi și comportament nesportiv",13:"Loviturile libere",
   14:"Lovitura de pedeapsă",15:"Aruncarea de la margine",16:"Lovitura de poartă",17:"Lovitura de colț"};
-const ROLE = {referee:"Arbitru", instructor:"Instructor", admin:"Administrator"};
+const ROLE = {};
+const fillRoles = () => ["referee","instructor","admin"].forEach(r=>ROLE[r]=t("roles."+r));
+fillRoles();
 
 /* ---------- utilitare ---------- */
 const $ = s => document.querySelector(s);
 const app = $("#app");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const shuffle = a => { a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
-const fmtDate = d => d ? new Date(d).toLocaleString("ro-RO",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—";
-const lawName = l => "Legea "+l+(LAWS[l]?" · "+LAWS[l]:"");
+const fmtDate = d => d ? new Date(d).toLocaleString(I18N.locale,{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—";
+const lawName = l => LAWS[l] ? t("laws.lawNamed",{n:l, name:LAWS[l]}) : t("laws.law",{n:l});
+const diffName = d => t("difficulty."+(d==="greu"?"greu":"mediu"));
 let toastT;
-function toast(msg, err){ const t=$("#toast"); t.textContent=msg; t.className=err?"err":""; t.style.display="block"; clearTimeout(toastT); toastT=setTimeout(()=>t.style.display="none", 4200); }
+function toast(msg, err){ const el=$("#toast"); el.textContent=msg; el.className=err?"err":""; el.style.display="block"; clearTimeout(toastT); toastT=setTimeout(()=>el.style.display="none", 4200); }
 function errMsg(e){
   const m = (e && (e.message || e.error_description || e.msg)) || String(e);
-  if(/Invalid login credentials/i.test(m)) return "Email sau parolă greșită.";
-  if(/Email not confirmed/i.test(m)) return "Confirmă-ți adresa de email (verifică inboxul), apoi autentifică-te.";
-  if(/User already registered/i.test(m)) return "Există deja un cont cu acest email. Autentifică-te.";
-  if(/Password should be at least/i.test(m)) return "Parola trebuie să aibă cel puțin 6 caractere.";
-  if(/rate limit/i.test(m)) return "Prea multe încercări. Mai încearcă peste câteva minute.";
+  if(/Invalid login credentials/i.test(m)) return t("errors.invalidLogin");
+  if(/Email not confirmed/i.test(m)) return t("errors.emailNotConfirmed");
+  if(/User already registered/i.test(m)) return t("errors.alreadyRegistered");
+  if(/Password should be at least/i.test(m)) return t("errors.passwordShort");
+  if(/rate limit/i.test(m)) return t("errors.rateLimit");
   return m;
 }
 async function must(p){ const r = await p; if(r.error) throw r.error; return r.data; }
 function on(sel, ev, fn){ const el = typeof sel==="string" ? $(sel) : sel; if(el) el.addEventListener(ev, fn); }
+// inițialele: prima literă din primele două cuvinte, în ordinea scrisă („Paunescu Lucian” → PL)
+function initials(name){
+  const w = String(name||"").trim().split(/\s+/).filter(Boolean);
+  if(!w.length) return "?";
+  if(w.length===1) return w[0].slice(0,2).toUpperCase();
+  return (w[0][0]+w[1][0]).toUpperCase();
+}
 
 /* ---------- configurare ---------- */
 $("#appName").textContent = CFG.APP_NAME || "Fluier";
-$("#season").textContent = "Legile Jocului " + (CFG.SEASON || "");
+$("#season").textContent = t("app.subtitle",{season: CFG.SEASON || ""});
 if(!window.supabase || !CFG.SUPABASE_URL || /COMPLETEAZA/.test(CFG.SUPABASE_URL+CFG.SUPABASE_ANON_KEY)){
-  app.innerHTML = `<div class="notice warn"><b>Aplicația nu este încă conectată la baza de date.</b><br>
-    Deschide fișierul <code>config.js</code> și completează <code>SUPABASE_URL</code> și <code>SUPABASE_ANON_KEY</code>
-    (le găsești în Supabase → Project Settings → API). Vezi pasul 3 din GHID.md.</div>`;
+  app.innerHTML = `<div class="notice warn"><b>${esc(t("errors.notConfiguredTitle"))}</b><br>${esc(t("errors.notConfiguredBody"))}</div>`;
   return;
 }
 // curăță adresa: fără spații, fără „/rest/v1”, fără „/” la final
 const SB_URL = String(CFG.SUPABASE_URL).trim().replace(/\/(rest|auth)\/v1.*$/i,"").replace(/\/+$/,"");
 if(/supabase\.com\/dashboard/i.test(SB_URL) || !/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(SB_URL)){
-  app.innerHTML = `<div class="notice warn"><b>Adresa din config.js nu e corectă.</b><br>Acum este: <code>${esc(SB_URL)}</code><br>
-    Trebuie să arate exact așa: <code>https://xxxxxxxxxxxx.supabase.co</code>, fără nimic după <code>.co</code>.
-    O găsești în Supabase → butonul verde <b>Connect</b> sau Settings → Data API.</div>`;
+  app.innerHTML = `<div class="notice warn"><b>${esc(t("errors.badUrlTitle"))}</b><br>${esc(t("errors.badUrlBody",{url:SB_URL}))}</div>`;
   return;
 }
 const sb = window.supabase.createClient(SB_URL, String(CFG.SUPABASE_ANON_KEY).trim());
@@ -57,7 +72,9 @@ const S = {
   user:null, profile:null, membership:null, association:null,
   Q:[], QM:{},            // întrebări (listă + după id)
   hist:{},                // id -> {ok,n,last}
-  tab:"train", listFilter:null
+  fav:new Set(),          // id-urile întrebărilor favorite
+  pending:0,              // teste active, necompletate
+  tab:"train", listFilter:null, statsOpen:false
 };
 let quiz=null, timerId=null, booted=false;
 
@@ -67,16 +84,18 @@ function authScreen(mode){
   $("#tabs").style.display="none"; $("#userBox").innerHTML="";
   const signup = mode==="signup", reset = mode==="reset";
   app.innerHTML = `<div class="center">
-    <h1>${signup?"Creează cont":reset?"Resetează parola":"Intră în cont"}</h1>
-    <p class="sub">${signup?"Contul tău păstrează progresul pe orice dispozitiv.":reset?"Îți trimitem pe email un link pentru o parolă nouă.":"Pregătire pentru testele de arbitraj."}</p>
+    <h1>${esc(t(signup?"auth.signupTitle":reset?"auth.resetTitle":"auth.loginTitle"))}</h1>
+    <p class="sub">${esc(t(signup?"auth.signupSub":reset?"auth.resetSub":"auth.loginSub"))}</p>
     <form id="authForm" class="card">
-      ${signup?`<label for="fn">Nume și prenume</label><input id="fn" autocomplete="name" required placeholder="ex.: Ion Popescu">`:""}
-      <label for="em">Email</label><input id="em" type="email" autocomplete="email" required>
-      ${reset?"":`<label for="pw">Parolă</label><input id="pw" type="password" autocomplete="${signup?"new-password":"current-password"}" minlength="6" required>`}
-      <div style="margin-top:16px"><button class="btn" style="width:100%" id="authBtn">${signup?"Creează contul":reset?"Trimite linkul":"Intră"}</button></div>
+      ${signup?`<div class="grid" style="gap:0 12px">
+        <div><label for="ln">${esc(t("auth.lastName"))}</label><input id="ln" autocomplete="family-name" required placeholder="${esc(t("auth.lastNamePh"))}"></div>
+        <div><label for="fn">${esc(t("auth.firstName"))}</label><input id="fn" autocomplete="given-name" required placeholder="${esc(t("auth.firstNamePh"))}"></div></div>`:""}
+      <label for="em">${esc(t("auth.email"))}</label><input id="em" type="email" autocomplete="email" required>
+      ${reset?"":`<label for="pw">${esc(t("auth.password"))}</label><input id="pw" type="password" autocomplete="${signup?"new-password":"current-password"}" minlength="6" required>`}
+      <div style="margin-top:16px"><button class="btn" style="width:100%" id="authBtn">${esc(t(signup?"auth.signupBtn":reset?"auth.resetBtn":"auth.loginBtn"))}</button></div>
     </form>
     <div class="row" style="justify-content:center;margin-top:14px;font-size:14px">
-      ${signup||reset?`<a id="toLogin">Am deja cont</a>`:`<a id="toSignup">Nu am cont – creează unul</a> · <a id="toReset">Am uitat parola</a>`}
+      ${signup||reset?`<a id="toLogin">${esc(t("auth.haveAccount"))}</a>`:`<a id="toSignup">${esc(t("auth.noAccount"))}</a> · <a id="toReset">${esc(t("auth.forgot"))}</a>`}
     </div></div>`;
   on("#toLogin","click",()=>authScreen("login"));
   on("#toSignup","click",()=>authScreen("signup"));
@@ -86,13 +105,15 @@ function authScreen(mode){
     const email=$("#em").value.trim();
     try{
       if(signup){
-        const full_name=$("#fn").value.trim();
+        const last_name=$("#ln").value.trim(), first_name=$("#fn").value.trim();
+        if(!last_name || !first_name){ b.disabled=false; return; }
         const r = await must(sb.auth.signUp({email, password:$("#pw").value,
-          options:{data:{full_name}, emailRedirectTo: location.origin+location.pathname}}));
-        if(!r.session){ app.innerHTML=`<div class="center notice"><b>Verifică-ți emailul.</b><br>Ți-am trimis un link de confirmare la <b>${esc(email)}</b>. După confirmare, revino și autentifică-te.</div>`; return; }
+          options:{data:{last_name, first_name, full_name:(last_name+" "+first_name).trim(), preferred_language:I18N.lang},
+                   emailRedirectTo: location.origin+location.pathname}}));
+        if(!r.session){ app.innerHTML=`<div class="center notice"><b>${esc(t("auth.checkEmail"))}</b><br>${esc(t("auth.checkEmailBody",{email}))}</div>`; return; }
       } else if(reset){
         await must(sb.auth.resetPasswordForEmail(email,{redirectTo: location.origin+location.pathname}));
-        app.innerHTML=`<div class="center notice">Dacă există un cont cu <b>${esc(email)}</b>, vei primi un email cu linkul de resetare.</div>`; return;
+        app.innerHTML=`<div class="center notice">${esc(t("auth.resetSent",{email}))}</div>`; return;
       } else {
         await must(sb.auth.signInWithPassword({email, password:$("#pw").value}));
       }
@@ -102,24 +123,30 @@ function authScreen(mode){
 
 function newPasswordScreen(){
   $("#tabs").style.display="none";
-  app.innerHTML = `<div class="center"><h1>Parolă nouă</h1>
-    <form id="npForm" class="card"><label for="np">Parola nouă</label><input id="np" type="password" minlength="6" required autocomplete="new-password">
-    <div style="margin-top:16px"><button class="btn" style="width:100%">Salvează</button></div></form></div>`;
+  app.innerHTML = `<div class="center"><h1>${esc(t("auth.newPassTitle"))}</h1>
+    <form id="npForm" class="card"><label for="np">${esc(t("auth.newPassLabel"))}</label><input id="np" type="password" minlength="6" required autocomplete="new-password">
+    <div style="margin-top:16px"><button class="btn" style="width:100%">${esc(t("auth.save"))}</button></div></form></div>`;
   on("#npForm","submit", async e=>{
     e.preventDefault();
-    try{ await must(sb.auth.updateUser({password:$("#np").value})); S.recovery=false; toast("Parola a fost schimbată."); boot(); }
+    try{ await must(sb.auth.updateUser({password:$("#np").value})); S.recovery=false; toast(t("auth.passChanged")); boot(); }
     catch(err){ toast(errMsg(err), true); }
   });
 }
 
 /* ===================== ÎNCĂRCARE DATE ===================== */
-const QCOLS = "id,law,difficulty,is_new,text,options,correct,explanations,ref,active,association_id,origin_association_id,review_status,created_by,created_at";
-const rowToQ = r => ({id:r.id, l:r.law, d:r.difficulty, nou:!!r.is_new, q:r.text, o:r.options, c:r.correct, w:r.explanations, r:r.ref,
-  active:r.active!==false, assoc:r.association_id||null, origin:r.origin_association_id||null, status:r.review_status||"none", at:r.created_at});
+const QCOLS = "id,law,difficulty,is_new,text,options,correct,explanations,ref,active,association_id,origin_association_id,review_status,created_by,created_at,text_en,options_en,explanations_en,ref_en,season";
+const rowToQ = r => ({id:r.id, l:r.law, d:r.difficulty, nou:!!r.is_new,
+  q:I18N.pick(r.text, r.text_en), o:I18N.pick(r.options, r.options_en), c:r.correct, w:I18N.pick(r.explanations, r.explanations_en), r:I18N.pick(r.ref, r.ref_en),
+  active:r.active!==false, assoc:r.association_id||null, origin:r.origin_association_id||null, status:r.review_status||"none", at:r.created_at, season:r.season});
 // citește toate rândurile, în pagini de câte 1000 (limita serverului)
 async function fetchAll(make){
   let out=[], from=0; const step=1000;
   while(true){ const rows = await must(make().range(from, from+step-1)); out = out.concat(rows); if(rows.length<step) return out; from+=step; }
+}
+async function loadLaws(){
+  try{ const rows = await must(sb.from("laws").select("id,name_ro,name_en").order("id"));
+       rows.forEach(r=>LAWS[r.id]=I18N.pick(r.name_ro, r.name_en)); }
+  catch(e){ /* tabelul lipsește (05 nerulat) – rămân numele de rezervă */ }
 }
 async function loadQuestions(){
   const rows = await fetchAll(()=>sb.from("questions").select(QCOLS).is("association_id", null).order("law").order("id"));
@@ -130,21 +157,41 @@ async function loadQuestions(){
 }
 // întrebare după id: din bancă sau din întrebările proprii ale asociației
 const qLookup = id => (S.QALL && S.QALL[id]) || (S.CQM && S.CQM[id]) || null;
+
+// statisticile vin gata calculate de server (un rând pe întrebare)
 async function loadHistory(){
-  S.hist = {}; let from=0; const step=1000;
-  while(true){
-    const rows = await must(sb.from("practice_answers").select("question_id,is_correct").eq("user_id",S.user.id).order("id").range(from, from+step-1));
-    rows.forEach(r=>{ const h=S.hist[r.question_id]||{ok:0,n:0}; h.n++; if(r.is_correct) h.ok++; h.last=r.is_correct; S.hist[r.question_id]=h; });
-    if(rows.length<step) break; from+=step;
-  }
+  S.hist = {};
+  const rows = await must(sb.rpc("my_question_stats"));
+  (rows||[]).forEach(r=>{ S.hist[r.question_id] = {n:r.answered, ok:r.correct, last:r.last_correct}; });
+}
+async function loadFavorites(){
+  try{ const rows = await fetchAll(()=>sb.from("favorites").select("question_id").eq("user_id",S.user.id).order("created_at"));
+       S.fav = new Set(rows.map(r=>r.question_id)); }
+  catch(e){ S.fav = new Set(); }
 }
 async function loadMembership(){
   S.profile = (await must(sb.from("profiles").select("*").eq("id",S.user.id).maybeSingle())) || {full_name:"",is_superadmin:false};
   S.membership = await must(sb.from("memberships").select("*").eq("user_id",S.user.id).maybeSingle());
   S.association = S.membership ? await must(sb.from("associations").select("*").eq("id",S.membership.association_id).maybeSingle()) : null;
 }
+// câte teste active, necompletate, are arbitrul în asociația lui
+async function loadPending(){
+  S.pending = 0;
+  const m = S.membership;
+  if(!m || m.status!=="approved" || !S.association) return;
+  try{
+    const [tests, subs] = await Promise.all([
+      must(sb.from("tests").select("id,group_name,opens_at,due_at").eq("association_id",S.association.id)),
+      must(sb.from("test_submissions").select("test_id").eq("user_id",S.user.id))
+    ]);
+    const done = new Set(subs.map(s=>s.test_id)), now = Date.now();
+    S.pending = tests.filter(x=>(!x.group_name || x.group_name===m.group_name) && !done.has(x.id)
+      && new Date(x.opens_at).getTime()<=now && !(x.due_at && new Date(x.due_at).getTime()<now)).length;
+  }catch(e){ S.pending = 0; }
+}
 const isStaff = () => S.membership && S.membership.status==="approved" && ["admin","instructor"].includes(S.membership.role);
 const isAdmin = () => S.membership && S.membership.status==="approved" && S.membership.role==="admin";
+const displayName = () => (S.profile && S.profile.full_name) || (S.user && S.user.email) || "";
 
 async function boot(){
   try{
@@ -153,11 +200,14 @@ async function boot(){
     booted = true;
     if(S.recovery) return newPasswordScreen();
     S.user = session.user;
-    app.innerHTML = '<div class="empty">Se încarcă…</div>';
-    await Promise.all([loadQuestions(), loadHistory(), loadMembership()]);
+    app.innerHTML = `<div class="empty">${esc(t("app.loading"))}</div>`;
+    await loadMembership();
+    // limba din profil (se aplică doar dacă e activată în config.js; acum: doar română)
+    if(S.profile.preferred_language && S.profile.preferred_language!==I18N.lang){ await I18N.init(S.profile.preferred_language); fillRoles(); }
+    await Promise.all([loadLaws(), loadQuestions(), loadHistory(), loadFavorites(), loadPending()]);
     renderChrome(); go(S.tab);
   }catch(err){
-    app.innerHTML = `<div class="notice err"><b>Nu m-am putut conecta la baza de date.</b><br>${esc(errMsg(err))}<br><br>Verifică <code>config.js</code> și dacă ai rulat fișierele SQL (GHID.md, pasul 2).</div>`;
+    app.innerHTML = `<div class="notice err"><b>${esc(t("errors.connectTitle"))}</b><br>${esc(errMsg(err))}<br><br>${esc(t("errors.connectHint"))}</div>`;
   }
 }
 
@@ -167,18 +217,43 @@ sb.auth.onAuthStateChange((ev, session)=>{
   if(ev==="SIGNED_OUT"){ S.user=null; booted=false; authScreen("login"); }
 });
 
-/* ===================== NAVIGARE ===================== */
+/* ===================== HEADER + NAVIGARE ===================== */
 function renderChrome(){
-  const name = (S.profile && S.profile.full_name) || S.user.email;
-  $("#userBox").innerHTML = `${esc(name)}<br><a id="logout">Ieși din cont</a>`;
-  on("#logout","click", async ()=>{ await sb.auth.signOut(); });
-  const tabs = [["train","Antrenament"],["assoc", S.association ? "Asociația mea" : "Intră în asociație"]];
-  if(isStaff()) tabs.push(["panel","Panou "+(isAdmin()?"administrator":"instructor")]);
-  if(S.profile && S.profile.is_superadmin) tabs.push(["super","Admin aplicație"]);
+  const name = displayName();
+  $("#userBox").innerHTML = `<div class="acct">
+    <button type="button" class="acct-btn" id="acctBtn" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(t("menu.open"))}">
+      <span class="acct-name">${esc(name)}</span><span class="avatar" aria-hidden="true">${esc(initials(name))}</span></button>
+    <div class="menu" id="acctMenu" role="menu" hidden>
+      <div class="menu-head"><span class="avatar lg" aria-hidden="true">${esc(initials(name))}</span>
+        <div><b>${esc(name)}</b><div class="muted" style="font-size:12px">${esc(S.user.email||"")}</div></div></div>
+      ${/* Loc pregătit pentru viitor: Profil / Abonament.
+           Ca să le afișezi, pune SHOW_PROFILE_MENU: true în config.js și construiește paginile. */ ""}
+      ${CFG.SHOW_PROFILE_MENU ? `<button type="button" role="menuitem" class="menu-item" data-menu="profile">${esc(t("menu.profile"))}</button>
+        <button type="button" role="menuitem" class="menu-item" data-menu="subscription">${esc(t("menu.subscription"))}</button><div class="menu-sep"></div>` : ""}
+      ${I18N.renderSwitcher()}
+      <button type="button" role="menuitem" class="menu-item danger" id="logout">${esc(t("menu.logout"))}</button>
+    </div></div>`;
+  const btn=$("#acctBtn"), menu=$("#acctMenu");
+  const close=()=>{ menu.hidden=true; btn.setAttribute("aria-expanded","false"); };
+  btn.onclick=e=>{ e.stopPropagation(); menu.hidden=!menu.hidden; btn.setAttribute("aria-expanded", String(!menu.hidden)); };
+  document.addEventListener("click", e=>{ if(!menu.hidden && !menu.contains(e.target)) close(); });
+  document.addEventListener("keydown", e=>{ if(e.key==="Escape") close(); });
+  on("#logout","click", async ()=>{ close(); await sb.auth.signOut(); });
+  menu.querySelectorAll("[data-lang]").forEach(b=>b.onclick=async()=>{
+    try{ await must(sb.from("profiles").update({preferred_language:b.dataset.lang}).eq("id",S.user.id)); }catch(e){}
+    location.reload(); });
+  renderTabs();
+}
+function renderTabs(){
+  const tabs = [["train",t("tabs.train")],["assoc", S.association ? t("tabs.myAssoc") : t("tabs.joinAssoc")]];
+  if(isStaff()) tabs.push(["panel", t(isAdmin()?"tabs.panelAdmin":"tabs.panelInstructor")]);
+  if(S.profile && S.profile.is_superadmin) tabs.push(["super",t("tabs.super")]);
   const nav=$("#tabs"); nav.style.display="flex";
-  nav.innerHTML = tabs.map(([k,v])=>`<button data-tab="${k}" class="${S.tab===k?"on":""}">${esc(v)}</button>`).join("");
+  nav.innerHTML = tabs.map(([k,v])=>`<button data-tab="${k}" class="${S.tab===k?"on":""}">${esc(v)}${k==="assoc"&&S.pending?
+    ` <span class="badge" aria-label="${esc(t("tabs.pendingBadge",{n:S.pending}))}">${S.pending}</span>`:""}</button>`).join("");
   nav.querySelectorAll("button").forEach(b=>b.onclick=()=>go(b.dataset.tab));
 }
+async function refreshPending(){ await loadPending(); renderTabs(); }
 function go(tab){
   stopQuiz();
   S.tab = tab;
@@ -194,42 +269,59 @@ on("#brand","click",()=>{ if(S.user) go("train"); });
 /* ===================== ANTRENAMENT ===================== */
 const doneCount = qs => qs.filter(q=>S.hist[q.id]).length;
 const lawsInBank = () => [...new Set(S.Q.map(q=>q.l))].sort((a,b)=>a-b);
+const favList = () => S.Q.filter(q=>S.fav.has(q.id));
 
 function trainHome(){
   const wrong = S.Q.filter(q=>S.hist[q.id] && S.hist[q.id].last===false);
-  const nNew = S.Q.filter(q=>q.nou).length;
+  const nNew = S.Q.filter(q=>q.nou).length, favs = favList();
+  const season = CFG.SEASON || "";
   app.innerHTML = `
-    <h1>Pregătește-te pentru test</h1>
-    <p class="sub">${S.Q.length} întrebări pe Legile Jocului ${esc(CFG.SEASON||"")}. Ai rezolvat ${doneCount(S.Q)} dintre ele. Antrenamentul tău e privat – asociația nu îl vede.</p>
+    <h1>${esc(t("train.title"))}</h1>
+    <p class="sub">${esc(t("train.sub",{total:S.Q.length, season, done:doneCount(S.Q)}))}</p>
     <div class="grid">
-      <button class="card" data-act="quick"><div class="ico">⚡</div><h3>Antrenament rapid</h3><p>10 întrebări amestecate.</p></button>
-      <button class="card" data-act="new"><div class="ico">🆕</div><h3>Nou în ${esc(CFG.SEASON||"acest sezon")}</h3><p>${nNew} întrebări pe modificările sezonului.</p></button>
-      <button class="card" data-act="exam"><div class="ico">⏱️</div><h3>Simulare de examen</h3><p>20 de întrebări, câte 60 de secunde, prag 80%.</p></button>
-      <button class="card" data-act="mistakes"><div class="ico">🔁</div><h3>Greșelile mele</h3><p>${wrong.length?wrong.length+" întrebări de reluat.":"Nicio greșeală de reluat."}</p></button>
-      <button class="card" data-act="all" style="grid-column:1/-1"><div class="ico">📋</div><h3>Toate întrebările</h3><p>Lista completă, fără răspunsuri. Alegi orice întrebare.</p></button>
+      <button class="card" data-act="quick"><div class="ico">⚡</div><h3>${esc(t("train.quick"))}</h3><p>${esc(t("train.quickSub"))}</p></button>
+      <button class="card" data-act="new"><div class="ico">🆕</div><h3>${esc(t("train.new",{season}))}</h3><p>${esc(t("train.newSub",{n:nNew}))}</p></button>
+      <button class="card" data-act="exam"><div class="ico">⏱️</div><h3>${esc(t("train.exam"))}</h3><p>${esc(t("train.examSub"))}</p></button>
+      <button class="card" data-act="mistakes"><div class="ico">🔁</div><h3>${esc(t("train.mistakes"))}</h3><p>${esc(wrong.length?t("train.mistakesSub",{n:wrong.length}):t("train.mistakesNone"))}</p></button>
+      <button class="card" data-act="all"><div class="ico">📋</div><h3>${esc(t("train.all"))}</h3><p>${esc(t("train.allSub"))}</p></button>
+      <button class="card" data-act="favs"><div class="ico">⭐</div><h3>${esc(t("train.favs"))}</h3><p>${esc(favs.length?t("train.favsCount",{n:favs.length}):t("train.favsSub"))}</p></button>
     </div>
-    <h2>Pe legi</h2>
-    <div class="chips">${lawsInBank().map(l=>{ const qs=S.Q.filter(q=>q.l===l), d=doneCount(qs);
-      return `<button class="chip" data-law="${l}">${esc(lawName(l))} <span class="prog ${d===qs.length?"full":""}">${d}/${qs.length}</span></button>`;}).join("")}</div>
-    <h2>Statisticile tale</h2><div id="stats"></div>`;
+    <h2>${esc(t("train.byLaw"))}</h2>
+    <div class="chips">${lawsInBank().map(l=>{ const qs=S.Q.filter(q=>q.l===l), d=doneCount(qs), p=Math.round(100*d/qs.length);
+      return `<button class="chip lawchip" data-law="${l}" aria-label="${esc(lawName(l)+" – "+t("train.lawProgress",{done:d,total:qs.length}))}">${esc(lawName(l))} <span class="prog ${d===qs.length?"full":""}">${d}/${qs.length}</span>
+        <span class="lawbar" aria-hidden="true"><i style="width:${p}%"></i></span></button>`;}).join("")}</div>
+    <h2>${esc(t("train.stats"))}</h2><div id="stats"></div>`;
   renderStats($("#stats"));
   app.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
     const a=b.dataset.act, back=()=>go("train");
-    if(a==="quick") runPractice(shuffle(S.Q).slice(0,10),"Antrenament rapid",back);
-    if(a==="new"){ const n=S.Q.filter(q=>q.nou); if(n.length) runPractice(shuffle(n),"Nou în sezon",back); }
-    if(a==="exam") runExam({title:"Simulare de examen", questions:shuffle(S.Q).slice(0,20), perQ:60, totalMin:20, official:false,
+    if(a==="quick") runPractice(shuffle(S.Q).slice(0,10),t("train.quick"),back);
+    if(a==="new"){ const n=S.Q.filter(q=>q.nou); if(n.length) runPractice(shuffle(n),t("train.newTitleShort"),back); }
+    if(a==="exam") runExam({title:t("train.exam"), questions:shuffle(S.Q).slice(0,20), perQ:60, totalMin:20, official:false,
                             onDone:(res)=>examResults(res, back)});
-    if(a==="mistakes"){ if(wrong.length) runPractice(shuffle(wrong),"Greșelile mele",back); }
+    if(a==="mistakes"){ if(wrong.length) runPractice(shuffle(wrong),t("train.mistakes"),back); }
     if(a==="all") listPage(null);
+    if(a==="favs"){ const f=favList(); if(f.length) runPractice(shuffle(f),t("train.favs"),back); else toast(t("train.favsEmpty")); }
   });
   app.querySelectorAll("[data-law]").forEach(b=>b.onclick=()=>listPage(+b.dataset.law));
 }
 
+// Top 3 legi slabe (minimum 3 răspunsuri pe lege, ca o singură greșeală să nu dea 0%) + „Vezi toate”
+const MIN_ANSWERS = 3;
 function renderStats(el){
-  const rows = lawsInBank().map(l=>{ let ok=0,n=0; S.Q.filter(q=>q.l===l).forEach(q=>{const h=S.hist[q.id]; if(h){ok+=h.ok;n+=h.n;}}); return {l,ok,n}; }).filter(r=>r.n);
-  if(!rows.length){ el.innerHTML='<div class="empty">Răspunde la câteva întrebări ca să vezi cum stai pe fiecare lege.</div>'; return; }
-  el.innerHTML = rows.map(r=>{ const p=Math.round(100*r.ok/r.n), col=p>=80?"var(--ok)":p>=60?"var(--yellow)":"var(--bad)";
-    return `<div class="stat"><div class="name">${esc(lawName(r.l))}<small>${r.n} răspunsuri</small></div><div class="bar"><i style="width:${p}%;background:${col}"></i></div><div class="pct" style="color:${col}">${p}%</div></div>`; }).join("");
+  const rows = lawsInBank().map(l=>{ let ok=0,n=0; S.Q.filter(q=>q.l===l).forEach(q=>{const h=S.hist[q.id]; if(h){ok+=h.ok;n+=h.n;}}); return {l,ok,n,p:n?Math.round(100*ok/n):0}; }).filter(r=>r.n);
+  if(!rows.length){ el.innerHTML=`<div class="empty">${esc(t("train.statsEmpty"))}</div>`; return; }
+  const byWeak = (a,b)=> a.p-b.p || b.n-a.n;
+  const enough = rows.filter(r=>r.n>=MIN_ANSWERS).sort(byWeak);
+  const top = (enough.length ? enough : rows.slice().sort(byWeak)).slice(0,3);
+  const all = rows.slice().sort(byWeak);
+  const list = S.statsOpen ? all : top;
+  const bar = r => { const col=r.p>=80?"var(--ok)":r.p>=60?"var(--yellow)":"var(--bad)";
+    return `<div class="stat"><div class="name">${esc(lawName(r.l))}<small>${esc(t("train.statsAnswers",{n:r.n}))}${r.n<MIN_ANSWERS?" · "+esc(t("train.statsFew")):""}</small></div>
+      <div class="bar"><i style="width:${r.p}%;background:${col}"></i></div><div class="pct" style="color:${col}">${r.p}%</div></div>`; };
+  el.innerHTML = `${S.statsOpen?"":`<div class="muted" style="font-size:13px;font-weight:700;margin-bottom:2px">${esc(t("train.statsTop"))}</div>`}
+    ${list.map(bar).join("")}
+    ${all.length>top.length || S.statsOpen ? `<div class="row" style="margin-top:12px"><button type="button" class="btn ghost sm" id="statsToggle" aria-expanded="${S.statsOpen}">${esc(t(S.statsOpen?"train.collapse":"train.seeAll"))}</button></div>`:""}`;
+  on("#statsToggle","click",()=>{ S.statsOpen=!S.statsOpen; renderStats(el); });
 }
 
 function listPage(law){
@@ -239,32 +331,47 @@ function listPage(law){
   if(law){
     qs=S.Q.filter(q=>q.l===law); const d=doneCount(qs), left=qs.length-d, pct=Math.round(100*d/qs.length);
     head=`<div class="card" style="margin-bottom:16px"><div class="muted" style="font-weight:700;font-size:13px">${esc(lawName(law))}</div>
-      <div style="font-size:28px;font-weight:800">${d}/${qs.length} <span class="muted" style="font-size:15px;font-weight:600">rezolvate</span></div>
+      <div style="font-size:28px;font-weight:800">${d}/${qs.length} <span class="muted" style="font-size:15px;font-weight:600">${esc(t("list.solved"))}</span></div>
       <div class="bar" style="margin:10px 0 14px;height:8px"><i style="width:${pct}%"></i></div>
-      <div class="row">${left?`<button class="btn" id="cont">Continuă (${left} rămase) →</button>`:`<button class="btn" id="redo">Ai terminat! Reia toată legea</button>`}
-      <button class="btn ghost" id="bk">Înapoi</button></div></div><h2>Alege o întrebare</h2>`;
+      <div class="row">${left?`<button class="btn" id="cont">${esc(t("list.continue",{n:left}))}</button>`:`<button class="btn" id="redo">${esc(t("list.redo"))}</button>`}
+      <button class="btn ghost" id="bk">${esc(t("list.back"))}</button></div></div><h2>${esc(t("list.pick"))}</h2>`;
   } else {
     qs = S.listFilter ? S.Q.filter(q=>q.l===S.listFilter) : S.Q;
-    head=`<div class="row"><h1 style="margin:0">Toate întrebările</h1><span class="spacer"></span><button class="btn ghost sm" id="bk">Înapoi</button></div>
-      <p class="sub">Apasă pe o întrebare ca să răspunzi. ✓ corect ultima dată · ✗ greșit · cerc gol = nerezolvată.</p>
-      <div class="chips" style="margin-bottom:14px"><button class="chip ${!S.listFilter?"on":""}" data-f="">Toate (${S.Q.length})</button>
-      ${lawsInBank().map(l=>{const x=S.Q.filter(q=>q.l===l);return `<button class="chip ${S.listFilter===l?"on":""}" data-f="${l}">Legea ${l} (${doneCount(x)}/${x.length})</button>`;}).join("")}</div>`;
+    head=`<div class="row"><h1 style="margin:0">${esc(t("list.allTitle"))}</h1><span class="spacer"></span><button class="btn ghost sm" id="bk">${esc(t("list.back"))}</button></div>
+      <p class="sub">${esc(t("list.allSub"))}</p>
+      <div class="chips" style="margin-bottom:14px"><button class="chip ${!S.listFilter?"on":""}" data-f="">${esc(t("list.filterAll",{n:S.Q.length}))}</button>
+      ${lawsInBank().map(l=>{const x=S.Q.filter(q=>q.l===l);return `<button class="chip ${S.listFilter===l?"on":""}" data-f="${l}">${esc(t("laws.law",{n:l}))} (${doneCount(x)}/${x.length})</button>`;}).join("")}</div>`;
   }
   app.innerHTML = head + `<div class="qlist">${qs.map(q=>{ const h=S.hist[q.id], st=!h?"":h.last===false?"bad":"ok";
-    return `<button class="qitem" data-id="${q.id}"><span class="st ${st}">${!h?"":st==="ok"?"✓":"✗"}</span><span>${esc(q.q)}<span class="meta">Legea ${q.l} · ${q.d==="greu"?"Greu":"Mediu"}${q.nou?" · Nou":""}</span></span></button>`;}).join("")}</div>`;
+    return `<button class="qitem" data-id="${q.id}"><span class="st ${st}">${!h?"":st==="ok"?"✓":"✗"}</span><span style="flex:1">${esc(q.q)}<span class="meta">${esc(t("laws.law",{n:q.l}))} · ${esc(diffName(q.d))}${q.nou?" · "+esc(t("list.new")):""}</span></span>${S.fav.has(q.id)?'<span class="favmark" aria-hidden="true">★</span>':""}</button>`;}).join("")}</div>`;
   on("#bk","click",()=>go("train"));
   on("#cont","click",()=>runPractice(shuffle(qs.filter(q=>!S.hist[q.id])), lawName(law), back));
   on("#redo","click",()=>runPractice(shuffle(qs), lawName(law), back));
   app.querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{ S.listFilter=b.dataset.f?+b.dataset.f:null; listPage(null); });
-  app.querySelectorAll(".qitem").forEach(b=>b.onclick=()=>runPractice([S.QM[+b.dataset.id]], law?lawName(law):"Întrebare din listă", back, true));
+  app.querySelectorAll(".qitem").forEach(b=>b.onclick=()=>runPractice([S.QM[+b.dataset.id]], law?lawName(law):t("list.fromList"), back, true));
   window.scrollTo(0,0);
 }
 
+/* ---------- favorite ---------- */
+async function toggleFav(q, btn){
+  const was = S.fav.has(q.id);
+  was ? S.fav.delete(q.id) : S.fav.add(q.id);
+  paintFav(btn, !was);
+  try{
+    if(was) await must(sb.from("favorites").delete().eq("user_id",S.user.id).eq("question_id",q.id));
+    else await must(sb.from("favorites").insert({user_id:S.user.id, question_id:q.id}));
+    toast(t(was?"quiz.favRemoved":"quiz.favAdded"));
+  }catch(err){ was ? S.fav.add(q.id) : S.fav.delete(q.id); paintFav(btn, was); toast(errMsg(err), true); }
+}
+function paintFav(btn, onn){ if(!btn) return; btn.textContent = onn?"★":"☆"; btn.classList.toggle("on", onn);
+  btn.setAttribute("aria-pressed", String(onn)); btn.setAttribute("aria-label", t(onn?"quiz.favRemove":"quiz.favAdd")); btn.title = t(onn?"quiz.favRemove":"quiz.favAdd"); }
+
 /* ---------- motorul de antrenament ---------- */
 const letter = (order, oi) => "ABCD"[order.indexOf(oi)];
-function qHeader(title,q){
-  return `<div class="tags"><span class="tag">${esc(title)}</span><span class="tag">Legea ${q.l}</span>
-    <span class="tag ${q.d==="greu"?"hard":"mid"}">${q.d==="greu"?"Greu":"Mediu"}</span>${q.nou?'<span class="tag new">Nou</span>':""}</div>`;
+function qHeader(title,q,withFav){
+  return `<div class="tags"><span class="tag">${esc(title)}</span><span class="tag">${esc(t("laws.law",{n:q.l}))}</span>
+    <span class="tag ${q.d==="greu"?"hard":"mid"}">${esc(diffName(q.d))}</span>${q.nou?`<span class="tag new">${esc(t("quiz.newTag"))}</span>`:""}
+    ${withFav?`<span class="spacer"></span><button type="button" class="favbtn" id="favBtn"></button>`:""}</div>`;
 }
 function runPractice(list, title, back, single){
   if(!list.length) return;
@@ -273,11 +380,12 @@ function runPractice(list, title, back, single){
 }
 function renderPractice(){
   const {list,i,title}=quiz, it=list[i], q=it.q;
-  app.innerHTML = `<div class="qtop"><button class="btn ghost sm" id="quit">✕</button><div class="bar"><i style="width:${Math.round(100*i/list.length)}%"></i></div>
+  app.innerHTML = `<div class="qtop"><button class="btn ghost sm" id="quit" aria-label="${esc(t("quiz.close"))}">✕</button><div class="bar"><i style="width:${Math.round(100*i/list.length)}%"></i></div>
     <span class="muted" style="font-size:13px;font-weight:700">${i+1}/${list.length}</span></div>
-    ${qHeader(title,q)}<p class="question">${esc(q.q)}</p>
+    ${qHeader(title,q,true)}<p class="question">${esc(q.q)}</p>
     <div class="opts">${it.order.map((oi,k)=>`<button class="opt" data-oi="${oi}"><span class="k">${"ABCD"[k]}</span><span>${esc(q.o[oi])}</span></button>`).join("")}</div>
     <div id="after"></div>`;
+  const fb=$("#favBtn"); paintFav(fb, S.fav.has(q.id)); fb.onclick=()=>toggleFav(q, fb);
   on("#quit","click",()=>{ const b=quiz.back; stopQuiz(); b(); });
   app.querySelectorAll(".opt").forEach(b=>b.onclick=()=>practiceAnswer(+b.dataset.oi));
   window.scrollTo(0,0);
@@ -287,16 +395,16 @@ function practiceAnswer(oi){
   quiz.answers[quiz.i]=oi;
   const h=S.hist[q.id]||{ok:0,n:0}; h.n++; if(ok) h.ok++; h.last=ok; S.hist[q.id]=h;
   sb.from("practice_answers").insert({user_id:S.user.id, question_id:q.id, chosen:oi, is_correct:ok})
-    .then(r=>{ if(r.error) toast("Răspunsul nu s-a salvat: "+errMsg(r.error), true); });
+    .then(r=>{ if(r.error) toast(t("errors.answerNotSaved",{msg:errMsg(r.error)}), true); });
   app.querySelectorAll(".opt").forEach(b=>{ b.disabled=true; const v=+b.dataset.oi; if(v===q.c) b.classList.add("correct"); else if(v===oi) b.classList.add("wrong"); });
   const others=[0,1,2,3].filter(v=>v!==q.c && v!==oi), L=v=>letter(it.order,v);
   const last = quiz.i===quiz.list.length-1;
-  $("#after").innerHTML = `<div class="verdict ${ok?"ok":"bad"}">${ok?"✓ Corect!":"✗ Greșit. Răspunsul corect este "+L(q.c)+"."}</div>
-    <div class="expl">${!ok?`<div class="blk"><h4>De ce nu e corect ${L(oi)}</h4>${esc(q.w[oi])}</div>`:""}
-      <div class="blk"><h4>De ce e corect ${L(q.c)}</h4>${esc(q.w[q.c])}</div>
-      <div class="blk"><h4>Celelalte variante</h4><ul>${others.map(v=>`<li><b>${L(v)}.</b> ${esc(q.w[v])}</li>`).join("")}</ul></div>
+  $("#after").innerHTML = `<div class="verdict ${ok?"ok":"bad"}">${esc(ok?t("quiz.correct"):t("quiz.wrong",{letter:L(q.c)}))}</div>
+    <div class="expl">${!ok?`<div class="blk"><h4>${esc(t("quiz.whyWrong",{letter:L(oi)}))}</h4>${esc(q.w[oi])}</div>`:""}
+      <div class="blk"><h4>${esc(t("quiz.whyRight",{letter:L(q.c)}))}</h4>${esc(q.w[q.c])}</div>
+      <div class="blk"><h4>${esc(t("quiz.others"))}</h4><ul>${others.map(v=>`<li><b>${L(v)}.</b> ${esc(q.w[v])}</li>`).join("")}</ul></div>
       ${q.r?`<div class="ref">📖 ${esc(q.r)}</div>`:""}</div>
-    <div class="row" style="margin-top:16px"><button class="btn" id="nx" style="flex:1">${quiz.single?"← Înapoi la listă":last?"Vezi rezultatul":"Următoarea întrebare →"}</button></div>`;
+    <div class="row" style="margin-top:16px"><button class="btn" id="nx" style="flex:1">${esc(quiz.single?t("quiz.backToList"):last?t("quiz.seeResult"):t("quiz.next"))}</button></div>`;
   on("#nx","click",()=>{
     if(quiz.single || last){ if(quiz.single){ const b=quiz.back; stopQuiz(); return b(); } return practiceResults(); }
     quiz.i++; renderPractice();
@@ -307,40 +415,40 @@ function practiceResults(){
   const n=quiz.answers.filter(a=>a!==undefined).length, ok=quiz.list.filter((it,k)=>quiz.answers[k]===it.q.c).length;
   const p=n?Math.round(100*ok/n):0, {back,title,list}=quiz;
   app.innerHTML=`<h1>${esc(title)}</h1><div class="score ${p>=80?"pass":"fail"}">${ok}/${n}</div>
-    <p class="sub">${p>=80?"Foarte bine!":"Întrebările greșite le găsești în „Greșelile mele”."}</p>
-    <div class="row"><button class="btn" id="ag">Încă o rundă</button><button class="btn ghost" id="bk">Înapoi</button></div>`;
+    <p class="sub">${esc(p>=80?t("quiz.great"):t("quiz.wrongSaved"))}</p>
+    <div class="row"><button class="btn" id="ag">${esc(t("quiz.again"))}</button><button class="btn ghost" id="bk">${esc(t("quiz.back"))}</button></div>`;
   on("#ag","click",()=>runPractice(shuffle(list.map(x=>x.q)),title,back));
   on("#bk","click",()=>{ stopQuiz(); back(); });
 }
 
 /* ---------- motorul de examen (simulare și teste oficiale) ---------- */
 function runExam(opts){
-  // opts: {title, questions, perQ, totalMin, official, onDone(res)}
   quiz = {kind:"exam", ...opts, list:opts.questions.map(q=>({q,order:shuffle([0,1,2,3])})), i:0, answers:[], leaves:0, timeouts:0,
           end: opts.totalMin ? Date.now()+opts.totalMin*60000 : 0};
   lockExam(true);
   clearInterval(timerId); timerId=setInterval(examTick,1000);
   renderExamQ();
 }
+function leftText(){ return t("exam.left",{n:quiz.leaves})+(quiz.official?" "+t("exam.leftOfficial"):""); }
 function renderExamQ(){
   const {list,i,title,perQ}=quiz, it=list[i], q=it.q;
-  app.innerHTML = `<div class="qtop">${quiz.official?"":'<button class="btn ghost sm" id="quit">✕</button>'}
+  app.innerHTML = `<div class="qtop">${quiz.official?"":`<button class="btn ghost sm" id="quit" aria-label="${esc(t("quiz.close"))}">✕</button>`}
       <div class="bar"><i style="width:${Math.round(100*i/list.length)}%"></i></div>
       ${quiz.end?'<span class="timer" id="timer"></span>':""}<span class="muted" style="font-size:13px;font-weight:700">${i+1}/${list.length}</span></div>
-    <div class="warnbar" id="examWarn" style="display:${quiz.leaves?"block":"none"}">⚠️ Ai părăsit testul (${quiz.leaves}).${quiz.official?" Instructorul vede acest lucru.":""}</div>
-    ${qHeader(title,q)}<p class="question">${esc(q.q)}</p>
+    <div class="warnbar" id="examWarn" style="display:${quiz.leaves?"block":"none"}">${esc(leftText())}</div>
+    ${qHeader(title,q,false)}<p class="question">${esc(q.q)}</p>
     <div class="opts">${it.order.map((oi,k)=>`<button class="opt" data-oi="${oi}"><span class="k">${"ABCD"[k]}</span><span>${esc(q.o[oi])}</span></button>`).join("")}</div>
     <div class="row" style="margin-top:14px"><span class="qtimer" id="qtimer">⏳ ${perQ}s</span></div>
-    <div class="secure-note">Mod examen: copierea e dezactivată, ${perQ} de secunde pe întrebare, fără întoarcere, ieșirile din aplicație sunt înregistrate.</div>`;
+    <div class="secure-note">${esc(t("exam.secureNote",{s:perQ}))}</div>`;
   quiz.qEnd = Date.now()+perQ*1000; examTick();
-  on("#quit","click",()=>{ const b=()=>go("train"); stopQuiz(); b(); });
+  on("#quit","click",()=>{ stopQuiz(); go("train"); });
   app.querySelectorAll(".opt").forEach(b=>b.onclick=()=>{ quiz.answers[quiz.i]=+b.dataset.oi; examNext(); });
   window.scrollTo(0,0);
 }
 function examTick(){
   if(!quiz || quiz.kind!=="exam"){ clearInterval(timerId); return; }
-  if(quiz.end){ const left=Math.max(0,quiz.end-Date.now()); const t=$("#timer");
-    if(t) t.textContent=Math.floor(left/60000)+":"+String(Math.floor(left/1000)%60).padStart(2,"0");
+  if(quiz.end){ const left=Math.max(0,quiz.end-Date.now()); const tm=$("#timer");
+    if(tm) tm.textContent=Math.floor(left/60000)+":"+String(Math.floor(left/1000)%60).padStart(2,"0");
     if(left<=0) return examFinish(); }
   const ql=Math.max(0,Math.ceil((quiz.qEnd-Date.now())/1000)), qt=$("#qtimer");
   if(qt){ qt.textContent="⏳ "+ql+"s"; qt.classList.toggle("low", ql<=10); }
@@ -357,36 +465,36 @@ function examResults(res, back, serverScore){
   const total=res.list.length, ok = serverScore ? serverScore.score : res.list.filter((it,k)=>res.answers[k]===it.q.c).length;
   const p=Math.round(100*ok/total), pass=p>=80;
   app.innerHTML = `<h1>${esc(res.title)}</h1><div class="score ${pass?"pass":"fail"}">${p}%</div>
-    <p class="sub">${ok} corecte din ${total}. ${pass?"Ai trecut pragul de 80%.":"Sub pragul de 80%."}</p>
-    <div class="card" style="font-size:14px;line-height:1.7;margin-bottom:8px"><b>Raport de integritate</b><br>
-      Ieșiri din aplicație: <b class="${res.leaves?"bad":"ok"}">${res.leaves}</b> · Întrebări expirate: <b>${res.timeouts}</b></div>
-    <h2>Recapitulare</h2>
+    <p class="sub">${esc(t("exam.correctOf",{ok,total}))} ${esc(t(pass?"exam.passed":"exam.failed"))}</p>
+    <div class="card" style="font-size:14px;line-height:1.7;margin-bottom:8px"><b>${esc(t("exam.integrity"))}</b><br>
+      ${esc(t("exam.leaves"))}: <b class="${res.leaves?"bad":"ok"}">${res.leaves}</b> · ${esc(t("exam.timeouts"))}: <b>${res.timeouts}</b></div>
+    <h2>${esc(t("exam.review"))}</h2>
     ${res.list.map((it,k)=>{ const q=it.q,a=res.answers[k],good=a===q.c;
-      return `<div class="review"><div class="q">${k+1}. ${esc(q.q)}</div><div class="a">${a===null?'<b class="bad">Fără răspuns.</b>':good?'<b class="ok">✓ Corect:</b> '+esc(q.o[q.c]):'<b class="bad">✗ Ai ales:</b> '+esc(q.o[a])+'<br><b class="ok">Corect:</b> '+esc(q.o[q.c])}</div>
-      <details><summary>Explicație</summary><div class="a" style="margin-top:6px">${a!==null&&!good?esc(q.w[a])+"<br><br>":""}${esc(q.w[q.c])}${q.r?"<br><i>📖 "+esc(q.r)+"</i>":""}</div></details></div>`;}).join("")}
-    <div class="row" style="margin-top:12px"><button class="btn" id="bk">Înapoi</button></div>`;
+      return `<div class="review"><div class="q">${k+1}. ${esc(q.q)}</div><div class="a">${a===null?`<b class="bad">${esc(t("exam.noAnswer"))}</b>`:good?`<b class="ok">${esc(t("exam.correctLabel"))}</b> `+esc(q.o[q.c]):`<b class="bad">${esc(t("exam.youChose"))}</b> `+esc(q.o[a])+`<br><b class="ok">${esc(t("exam.correctIs"))}</b> `+esc(q.o[q.c])}</div>
+      <details><summary>${esc(t("exam.explanation"))}</summary><div class="a" style="margin-top:6px">${a!==null&&!good?esc(q.w[a])+"<br><br>":""}${esc(q.w[q.c])}${q.r?"<br><i>📖 "+esc(q.r)+"</i>":""}</div></details></div>`;}).join("")}
+    <div class="row" style="margin-top:12px"><button class="btn" id="bk">${esc(t("quiz.back"))}</button></div>`;
   on("#bk","click",back); window.scrollTo(0,0);
 }
 function stopQuiz(){ clearInterval(timerId); lockExam(false); quiz=null; }
 
 /* ---------- anti-copiere ---------- */
 const inExam = () => quiz && quiz.kind==="exam";
-function flagLeave(reason){
+function flagLeave(reasonKey){
   if(!inExam()) return; quiz.leaves++;
-  const w=$("#examWarn"); if(w){ w.style.display="block"; w.textContent="⚠️ "+reason+" ("+quiz.leaves+")."+(quiz.official?" Instructorul vede acest lucru.":""); }
+  const w=$("#examWarn"); if(w){ w.style.display="block"; w.textContent="⚠️ "+t(reasonKey)+" ("+quiz.leaves+")."+(quiz.official?" "+t("exam.leftOfficial"):""); }
 }
 ["copy","cut","contextmenu","selectstart","dragstart"].forEach(ev=>document.addEventListener(ev,e=>{ if(inExam()) e.preventDefault(); }));
 document.addEventListener("keydown",e=>{ if(!inExam()) return; const k=(e.key||"").toLowerCase();
   if((e.ctrlKey||e.metaKey) && ["c","x","a","p","s","u"].includes(k)) e.preventDefault();
-  if(k==="printscreen") flagLeave("Captură de ecran detectată"); });
-document.addEventListener("visibilitychange",()=>{ if(document.hidden) flagLeave("Ai părăsit aplicația"); });
-window.addEventListener("blur",()=>{ if(!document.hidden) flagLeave("Ai schimbat fereastra"); });
+  if(k==="printscreen") flagLeave("exam.screenshot"); });
+document.addEventListener("visibilitychange",()=>{ if(document.hidden) flagLeave("exam.leftApp"); });
+window.addEventListener("blur",()=>{ if(!document.hidden) flagLeave("exam.switchedWindow"); });
 function lockExam(onn){
   document.body.classList.toggle("locked", !!onn);
   let wm=$("#wm");
   if(onn && !wm){
     wm=document.createElement("div"); wm.className="wm"; wm.id="wm";
-    const stamp=((S.profile&&S.profile.full_name)||S.user.email)+" · "+S.user.id.slice(0,8)+" · "+new Date().toLocaleString("ro-RO");
+    const stamp=displayName()+" · "+S.user.id.slice(0,8)+" · "+new Date().toLocaleString(I18N.locale);
     let rows=""; for(let i=0;i<14;i++) rows+=`<div style="top:${i*9-10}%">${esc((stamp+" · ").repeat(6))}</div>`;
     wm.innerHTML=rows; document.body.appendChild(wm);
   }
@@ -396,26 +504,26 @@ function lockExam(onn){
 /* ===================== ASOCIAȚIA MEA (arbitru) ===================== */
 async function assocPage(){
   if(!S.membership){
-    app.innerHTML = `<h1>Intră în asociația ta</h1>
-      <p class="sub">Cere codul de la comisia de arbitri (CJA/AJF). După ce introduci codul, administratorul asociației îți aprobă cererea.</p>
-      <form id="joinForm" class="card"><label for="code">Codul asociației</label><input id="code" placeholder="ex.: PR-7K2Q9" autocapitalize="characters" required>
-      <div style="margin-top:14px"><button class="btn">Trimite cererea</button></div></form>`;
+    app.innerHTML = `<h1>${esc(t("assoc.joinTitle"))}</h1>
+      <p class="sub">${esc(t("assoc.joinSub"))}</p>
+      <form id="joinForm" class="card"><label for="code">${esc(t("assoc.codeLabel"))}</label><input id="code" placeholder="${esc(t("assoc.codePh"))}" autocapitalize="characters" required>
+      <div style="margin-top:14px"><button class="btn">${esc(t("assoc.send"))}</button></div></form>`;
     on("#joinForm","submit", async e=>{ e.preventDefault();
       try{ const r=await must(sb.rpc("join_association",{p_code:$("#code").value}));
-        toast(r.status==="pending" ? "Cerere trimisă către "+r.association+"." : "Ai intrat ca administrator în "+r.association+".");
-        await loadMembership(); renderChrome(); go(r.role==="admin"?"panel":"assoc");
+        toast(r.status==="pending" ? t("assoc.sentTo",{name:r.association}) : t("assoc.joinedAdmin",{name:r.association}));
+        await loadMembership(); await loadPending(); renderChrome(); go(r.role==="admin"?"panel":"assoc");
       }catch(err){ toast(errMsg(err), true); } });
     return;
   }
   const a=S.association, m=S.membership;
   if(m.status==="pending"){
-    app.innerHTML = `<h1>${esc(a?a.name:"Asociația")}</h1><div class="notice warn">⏳ Cererea ta așteaptă aprobarea administratorului asociației.</div>
-      <div class="row" style="margin-top:14px"><button class="btn ghost" id="rf">Verifică din nou</button><button class="btn danger" id="cancel">Anulează cererea</button></div>`;
-    on("#rf","click", async ()=>{ await loadMembership(); renderChrome(); assocPage(); });
+    app.innerHTML = `<h1>${esc(a?a.name:"")}</h1><div class="notice warn">${esc(t("assoc.pending"))}</div>
+      <div class="row" style="margin-top:14px"><button class="btn ghost" id="rf">${esc(t("assoc.checkAgain"))}</button><button class="btn danger" id="cancel">${esc(t("assoc.cancel"))}</button></div>`;
+    on("#rf","click", async ()=>{ await loadMembership(); await loadPending(); renderChrome(); assocPage(); });
     on("#cancel","click", async ()=>{ try{ await must(sb.from("memberships").delete().eq("id",m.id)); await loadMembership(); renderChrome(); assocPage(); }catch(err){ toast(errMsg(err),true);} });
     return;
   }
-  app.innerHTML = '<div class="empty">Se încarcă testele…</div>';
+  app.innerHTML = `<div class="empty">${esc(t("assoc.loadingTests"))}</div>`;
   try{
     const [tests, subs] = await Promise.all([
       must(sb.from("tests").select("*").eq("association_id",a.id).order("created_at",{ascending:false})),
@@ -423,56 +531,54 @@ async function assocPage(){
     ]);
     const sm={}; subs.forEach(s=>sm[s.test_id]=s);
     const now=Date.now();
-    const visible = tests.filter(t=>!t.group_name || t.group_name===m.group_name);
+    const visible = tests.filter(x=>!x.group_name || x.group_name===m.group_name);
     app.innerHTML = `<h1>${esc(a.name)}</h1>
-      <p class="sub">${esc(ROLE[m.role])}${m.group_name?" · grupa "+esc(m.group_name):""}. Rezultatele testelor de aici le vede comisia; antrenamentul tău rămâne privat.</p>
-      <h2>Teste</h2>
-      ${visible.length? visible.map(t=>{ const s=sm[t.id], open=new Date(t.opens_at).getTime()<=now, expired=t.due_at && new Date(t.due_at).getTime()<now;
-        const status = s ? `<span class="pill g">${s.score}/${s.total}</span>` : expired ? '<span class="pill r">Expirat</span>' : !open ? '<span class="pill">Se deschide '+fmtDate(t.opens_at)+'</span>' : '<span class="pill y">De făcut</span>';
-        return `<div class="card" style="margin-bottom:10px"><div class="row"><div style="flex:1"><h3>${esc(t.title)}</h3>
-          <div class="muted" style="font-size:13px">${t.question_ids.length} întrebări · ${t.per_question_seconds}s/întrebare · termen ${fmtDate(t.due_at)}</div></div>${status}</div>
-          ${!s && open && !expired ? `<div style="margin-top:12px"><button class="btn" data-start="${t.id}">Începe testul</button></div>`:""}</div>`; }).join("")
-        : '<div class="empty">Nu ai teste deocamdată.</div>'}
-      <div style="margin-top:20px"><button class="btn danger sm" id="leave">Părăsește asociația</button></div>`;
-    app.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=>startOfficial(tests.find(t=>t.id===b.dataset.start)));
+      <p class="sub">${esc(t("assoc.roleGroup",{role:ROLE[m.role], group: m.group_name ? t("assoc.groupSuffix",{g:m.group_name}) : ""}))}</p>
+      <h2>${esc(t("assoc.tests"))}</h2>
+      ${visible.length? visible.map(x=>{ const s=sm[x.id], open=new Date(x.opens_at).getTime()<=now, expired=x.due_at && new Date(x.due_at).getTime()<now;
+        const status = s ? `<span class="pill g">${s.score}/${s.total}</span>` : expired ? `<span class="pill r">${esc(t("assoc.statusExpired"))}</span>` : !open ? `<span class="pill">${esc(t("assoc.statusOpensAt",{date:fmtDate(x.opens_at)}))}</span>` : `<span class="pill y">${esc(t("assoc.statusTodo"))}</span>`;
+        return `<div class="card" style="margin-bottom:10px"><div class="row"><div style="flex:1"><h3>${esc(x.title)}</h3>
+          <div class="muted" style="font-size:13px">${esc(t("assoc.testMeta",{n:x.question_ids.length, s:x.per_question_seconds, due:fmtDate(x.due_at)}))}</div></div>${status}</div>
+          ${!s && open && !expired ? `<div style="margin-top:12px"><button class="btn" data-start="${x.id}">${esc(t("assoc.start"))}</button></div>`:""}</div>`; }).join("")
+        : `<div class="empty">${esc(t("assoc.noTests"))}</div>`}
+      <div style="margin-top:20px"><button class="btn danger sm" id="leave">${esc(t("assoc.leave"))}</button></div>`;
+    app.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=>startOfficial(tests.find(x=>x.id===b.dataset.start)));
     on("#leave","click", async ()=>{
-      if(!window.__leaveConfirm){ window.__leaveConfirm=true; toast("Apasă încă o dată ca să confirmi."); setTimeout(()=>window.__leaveConfirm=false,4000); return; }
-      try{ await must(sb.from("memberships").delete().eq("id",m.id)); await loadMembership(); renderChrome(); go("assoc"); }catch(err){ toast(errMsg(err),true); }
+      if(!window.__leaveConfirm){ window.__leaveConfirm=true; toast(t("assoc.leaveConfirm")); setTimeout(()=>window.__leaveConfirm=false,4000); return; }
+      try{ await must(sb.from("memberships").delete().eq("id",m.id)); await loadMembership(); S.pending=0; renderChrome(); go("assoc"); }catch(err){ toast(errMsg(err),true); }
     });
   }catch(err){ app.innerHTML=`<div class="notice err">${esc(errMsg(err))}</div>`; }
 }
 
-function startOfficial(t){
-  app.innerHTML = `<h1>${esc(t.title)}</h1><div class="notice">
-    <b>Înainte să începi:</b><ul style="margin:8px 0 0;padding-left:18px;line-height:1.7">
-    <li>${t.question_ids.length} întrebări, câte <b>${t.per_question_seconds} de secunde</b> fiecare.</li>
-    <li>Nu te poți întoarce la o întrebare anterioară.</li>
-    <li>Testul se poate da <b>o singură dată</b>. Ora la care îl începi se înregistrează.</li>
-    <li>Ieșirile din aplicație sunt înregistrate și le vede instructorul.</li>
-    <li>Răspunsurile corecte și explicațiile apar după ce trimiți testul.</li></ul></div>
-    <div class="row" style="margin-top:16px"><button class="btn" id="go">Încep testul</button><button class="btn ghost" id="bk">Nu acum</button></div>`;
+function startOfficial(x){
+  app.innerHTML = `<h1>${esc(x.title)}</h1><div class="notice">
+    <b>${esc(t("assoc.beforeTitle"))}</b><ul style="margin:8px 0 0;padding-left:18px;line-height:1.7">
+    <li>${esc(t("assoc.rule1",{n:x.question_ids.length, s:x.per_question_seconds}))}</li>
+    <li>${esc(t("assoc.rule2"))}</li><li>${esc(t("assoc.rule3"))}</li><li>${esc(t("assoc.rule4"))}</li><li>${esc(t("assoc.rule5"))}</li></ul></div>
+    <div class="row" style="margin-top:16px"><button class="btn" id="go">${esc(t("assoc.go"))}</button><button class="btn ghost" id="bk">${esc(t("assoc.notNow"))}</button></div>`;
   on("#bk","click",()=>go("assoc"));
   on("#go","click", async ()=>{
     $("#go").disabled=true;
     let qs;
     try{
-      const rows = await must(sb.rpc("get_test_questions",{p_test:t.id}));
-      qs = rows.map(r=>({id:r.id, l:r.law, d:r.difficulty, nou:!!r.is_new, q:r.text, o:r.options, r:r.ref, c:-1, w:["","","",""]}));
+      const rows = await must(sb.rpc("get_test_questions",{p_test:x.id}));
+      qs = rows.map(r=>({id:r.id, l:r.law, d:r.difficulty, nou:!!r.is_new, q:I18N.pick(r.text,r.text_en), o:I18N.pick(r.options,r.options_en), r:I18N.pick(r.ref,r.ref_en), c:-1, w:["","","",""]}));
     }catch(err){ $("#go").disabled=false; return toast(errMsg(err), true); }
     // fiecare arbitru primește întrebările în altă ordine; răspunsurile se pun la loc înainte de trimitere
     const perm = shuffle(qs.map((_,k)=>k));
-    runExam({title:t.title, questions:perm.map(k=>qs[k]), perQ:t.per_question_seconds, totalMin:0, official:true,
+    runExam({title:x.title, questions:perm.map(k=>qs[k]), perQ:x.per_question_seconds, totalMin:0, official:true,
       onDone: async shown=>{
         const res = {...shown, list:qs.map((q,k)=>shown.list[perm.indexOf(k)]), answers:qs.map((q,k)=>shown.answers[perm.indexOf(k)])};
         const send = async ()=>{
-          const r = await must(sb.rpc("submit_test",{p_test:t.id, p_answers:res.answers, p_leaves:res.leaves, p_timeouts:res.timeouts}));
-          (r.questions||[]).forEach((x,k)=>{ const it=res.list[k]; if(it && it.q.id===x.id){ it.q.c=x.correct; it.q.w=x.explanations; } });
+          const r = await must(sb.rpc("submit_test",{p_test:x.id, p_answers:res.answers, p_leaves:res.leaves, p_timeouts:res.timeouts}));
+          (r.questions||[]).forEach((y,k)=>{ const it=res.list[k]; if(it && it.q.id===y.id){ it.q.c=y.correct; it.q.w=y.explanations; } });
           examResults(res, ()=>go("assoc"), r);
+          refreshPending();
         };
-        app.innerHTML='<div class="empty">Se trimite testul…</div>';
+        app.innerHTML=`<div class="empty">${esc(t("assoc.sending"))}</div>`;
         try{ await send(); }
         catch(err){
-          app.innerHTML=`<div class="notice err"><b>Testul nu a putut fi trimis.</b><br>${esc(errMsg(err))}<br>Nu închide pagina: răspunsurile tale sunt încă aici.</div><div class="row" style="margin-top:12px"><button class="btn" id="retry">Încearcă din nou</button></div>`;
+          app.innerHTML=`<div class="notice err"><b>${esc(t("assoc.sendFailed"))}</b><br>${esc(errMsg(err))}<br>${esc(t("assoc.sendFailedHint"))}</div><div class="row" style="margin-top:12px"><button class="btn" id="retry">${esc(t("assoc.retry"))}</button></div>`;
           on("#retry","click", async ()=>{ try{ await send(); }catch(e2){ toast(errMsg(e2),true);} });
         }
       }});
