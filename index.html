@@ -50,9 +50,10 @@
   .btn:disabled{opacity:.45;cursor:not-allowed}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   label{display:block;font-size:13px;font-weight:700;color:var(--muted);margin:12px 0 6px}
-  input,select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:12px;padding:12px;font:inherit;font-size:15px}
-  input:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px}
-  input[type=checkbox]{width:auto}
+  input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:12px;padding:12px;font:inherit;font-size:15px}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+  input[type=checkbox],input[type=radio]{width:auto}
+  textarea{resize:vertical;line-height:1.45}
   .checks{display:flex;flex-wrap:wrap;gap:8px}
   .checks label{display:flex;gap:6px;align-items:center;margin:0;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:7px 12px;color:var(--text);cursor:pointer}
   .notice{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;line-height:1.55;font-size:14.5px}
