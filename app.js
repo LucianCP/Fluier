@@ -154,6 +154,12 @@ async function loadQuestions(){
   S.QALL = {}; all.forEach(q=>S.QALL[q.id]=q);          // inclusiv cele dezactivate (pentru rapoarte vechi)
   S.Q = all.filter(q=>q.active);                          // antrenamentul folosește doar cele active
   S.QM = {}; S.Q.forEach(q=>S.QM[q.id]=q);
+  S.searchIdx = null;                                     // indexul de căutare se reface la nevoie
+}
+// căutare în banca de întrebări (indexul se construiește o singură dată, la prima căutare)
+function runSearch(query, filter){
+  if(!S.searchIdx) S.searchIdx = FluierSearch.build(S.Q, l=>lawName(l));
+  return FluierSearch.search(S.searchIdx, query||"", {filter});
 }
 // întrebare după id: din bancă sau din întrebările proprii ale asociației
 const qLookup = id => (S.QALL && S.QALL[id]) || (S.CQM && S.CQM[id]) || null;
@@ -230,6 +236,8 @@ function renderChrome(){
            Ca să le afișezi, pune SHOW_PROFILE_MENU: true în config.js și construiește paginile. */ ""}
       ${CFG.SHOW_PROFILE_MENU ? `<button type="button" role="menuitem" class="menu-item" data-menu="profile">${esc(t("menu.profile"))}</button>
         <button type="button" role="menuitem" class="menu-item" data-menu="subscription">${esc(t("menu.subscription"))}</button><div class="menu-sep"></div>` : ""}
+      <button type="button" role="menuitem" class="menu-item" id="resetStats">${esc(t("menu.resetStats"))}</button>
+      <div class="menu-sep"></div>
       ${I18N.renderSwitcher()}
       <button type="button" role="menuitem" class="menu-item danger" id="logout">${esc(t("menu.logout"))}</button>
     </div></div>`;
@@ -239,6 +247,7 @@ function renderChrome(){
   document.addEventListener("click", e=>{ if(!menu.hidden && !menu.contains(e.target)) close(); });
   document.addEventListener("keydown", e=>{ if(e.key==="Escape") close(); });
   on("#logout","click", async ()=>{ close(); await sb.auth.signOut(); });
+  on("#resetStats","click", ()=>{ close(); resetDialog(); });
   menu.querySelectorAll("[data-lang]").forEach(b=>b.onclick=async()=>{
     try{ await must(sb.from("profiles").update({preferred_language:b.dataset.lang}).eq("id",S.user.id)); }catch(e){}
     location.reload(); });
@@ -256,6 +265,7 @@ function renderTabs(){
 async function refreshPending(){ await loadPending(); renderTabs(); }
 function go(tab){
   stopQuiz();
+  S.viewAssoc = null;
   S.tab = tab;
   document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on", b.dataset.tab===tab));
   window.scrollTo(0,0);
@@ -278,6 +288,8 @@ function trainHome(){
   app.innerHTML = `
     <h1>${esc(t("train.title"))}</h1>
     <p class="sub">${esc(t("train.sub",{total:S.Q.length, season, done:doneCount(S.Q)}))}</p>
+    <form class="searchbox" id="homeSearch" role="search"><span class="sicon" aria-hidden="true">🔍</span>
+      <input id="hs" type="search" autocomplete="off" placeholder="${esc(t("search.placeholder"))}" aria-label="${esc(t("search.label"))}"></form>
     <div class="grid">
       <button class="card" data-act="quick"><div class="ico">⚡</div><h3>${esc(t("train.quick"))}</h3><p>${esc(t("train.quickSub"))}</p></button>
       <button class="card" data-act="new"><div class="ico">🆕</div><h3>${esc(t("train.new",{season}))}</h3><p>${esc(t("train.newSub",{n:nNew}))}</p></button>
@@ -292,6 +304,8 @@ function trainHome(){
         <span class="lawbar" aria-hidden="true"><i style="width:${p}%"></i></span></button>`;}).join("")}</div>
     <h2>${esc(t("train.stats"))}</h2><div id="stats"></div>`;
   renderStats($("#stats"));
+  on("#hs","input",e=>{ if(e.target.value.trim()) searchPage(e.target.value, true); });
+  on("#homeSearch","submit",e=>{ e.preventDefault(); searchPage($("#hs").value, true); });
   app.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>{
     const a=b.dataset.act, back=()=>go("train");
     if(a==="quick") runPractice(shuffle(S.Q).slice(0,10),t("train.quick"),back);
@@ -299,7 +313,7 @@ function trainHome(){
     if(a==="exam") runExam({title:t("train.exam"), questions:shuffle(S.Q).slice(0,20), perQ:60, totalMin:20, official:false,
                             onDone:(res)=>examResults(res, back)});
     if(a==="mistakes"){ if(wrong.length) runPractice(shuffle(wrong),t("train.mistakes"),back); }
-    if(a==="all") listPage(null);
+    if(a==="all") searchPage("");
     if(a==="favs"){ const f=favList(); if(f.length) runPractice(shuffle(f),t("train.favs"),back); else toast(t("train.favsEmpty")); }
   });
   app.querySelectorAll("[data-law]").forEach(b=>b.onclick=()=>listPage(+b.dataset.law));
@@ -322,6 +336,98 @@ function renderStats(el){
     ${list.map(bar).join("")}
     ${all.length>top.length || S.statsOpen ? `<div class="row" style="margin-top:12px"><button type="button" class="btn ghost sm" id="statsToggle" aria-expanded="${S.statsOpen}">${esc(t(S.statsOpen?"train.collapse":"train.seeAll"))}</button></div>`:""}`;
   on("#statsToggle","click",()=>{ S.statsOpen=!S.statsOpen; renderStats(el); });
+}
+
+/* ---------- căutarea întrebărilor ---------- */
+function searchPage(query, focus){
+  stopQuiz();
+  const F = S.sf || (S.sf = {q:"", laws:[], diff:"", nou:false, status:"all", limit:40});
+  if(query!==undefined) { F.q = query; F.limit = 40; }
+  const statusOpts = [["all","search.stAll"],["todo","search.stTodo"],["wrong","search.stWrong"],["right","search.stRight"],["fav","search.stFav"]];
+  app.innerHTML = `
+    <div class="row"><h1 style="margin:0">${esc(t("search.title"))}</h1><span class="spacer"></span><button class="btn ghost sm" id="bk">${esc(t("list.back"))}</button></div>
+    <form class="searchbox big" id="sform" role="search"><span class="sicon" aria-hidden="true">🔍</span>
+      <input id="sq" type="search" autocomplete="off" value="${esc(F.q)}" placeholder="${esc(t("search.placeholder"))}" aria-label="${esc(t("search.label"))}">
+      ${F.q?`<button type="button" class="sclear" id="sclear" aria-label="${esc(t("search.clear"))}">✕</button>`:""}</form>
+    <p class="muted shint">${esc(t("search.hint"))}</p>
+    <div class="ffilters">
+      <div class="frow"><span class="flabel">${esc(t("search.law"))}</span><div class="chips">
+        ${lawsInBank().map(l=>`<button type="button" class="chip sm ${F.laws.includes(l)?"on":""}" data-fl="${l}" title="${esc(lawName(l))}">${l}</button>`).join("")}</div></div>
+      <div class="frow"><span class="flabel">${esc(t("search.level"))}</span><div class="chips">
+        ${[["","search.any"],["mediu","difficulty.mediu"],["greu","difficulty.greu"]].map(([v,k])=>`<button type="button" class="chip sm ${F.diff===v?"on":""}" data-fd="${v}">${esc(t(k))}</button>`).join("")}
+        <button type="button" class="chip sm ${F.nou?"on":""}" id="fnew">🆕 ${esc(t("search.onlyNew"))}</button></div></div>
+      <div class="frow"><span class="flabel">${esc(t("search.status"))}</span><div class="chips">
+        ${statusOpts.map(([v,k])=>`<button type="button" class="chip sm ${F.status===v?"on":""}" data-fs="${v}">${esc(t(k))}</button>`).join("")}</div></div>
+    </div>
+    <div id="sres" aria-live="polite"></div>`;
+  const statusOk = q => { const h=S.hist[q.id];
+    return F.status==="all" || (F.status==="todo"&&!h) || (F.status==="wrong"&&h&&h.last===false) || (F.status==="right"&&h&&h.last===true) || (F.status==="fav"&&S.fav.has(q.id)); };
+  const filt = q => (!F.laws.length||F.laws.includes(q.l)) && (!F.diff||q.d===F.diff) && (!F.nou||q.nou) && statusOk(q);
+  let missTimer;
+  const renderResults = ()=>{
+    const r = runSearch(F.q, filt);
+    const list = r.results, box = $("#sres");
+    clearTimeout(missTimer);
+    if(!list.length){
+      box.innerHTML = `<div class="empty">${esc(t("search.none"))}<br><span style="font-size:13px">${esc(t("search.noneHint"))}</span></div>`;
+      const qq=F.q.trim();
+      if(qq.length>=3 && !r.empty) missTimer=setTimeout(()=>{ if(F.q.trim()===qq && !(S.missLogged||(S.missLogged=new Set())).has(qq)){ S.missLogged.add(qq);
+        sb.from("search_misses").insert({user_id:S.user.id, query:qq.slice(0,120)}).then(()=>{}); } }, 1500);
+      return;
+    }
+    const full = r.empty ? list : list.filter(x=>x.cover===r.words), part = r.empty ? [] : list.filter(x=>x.cover<r.words);
+    const shown = full.concat(part).slice(0, F.limit);
+    const where = x => { if(r.empty) return ""; const inText = FluierSearch.highlight(x.q.q, x.matched, esc).includes("<mark>");
+      return inText ? "" : ` · <span class="where">${esc(t("search.foundIn"))}</span>`; };
+    const item = x => { const q=x.q, h=S.hist[q.id], st=!h?"":h.last===false?"bad":"ok";
+      return `<button class="qitem" data-id="${q.id}"><span class="st ${st}">${!h?"":st==="ok"?"✓":"✗"}</span>
+        <span style="flex:1">${r.empty?esc(q.q):FluierSearch.highlight(q.q, x.matched, esc)}<span class="meta">${esc(lawName(q.l))} · ${esc(diffName(q.d))}${q.nou?" · "+esc(t("list.new")):""}${where(x)}</span></span>
+        ${S.fav.has(q.id)?'<span class="favmark" aria-hidden="true">★</span>':""}</button>`; };
+    const fullShown = shown.filter(x=>full.includes(x)), partShown = shown.filter(x=>part.includes(x));
+    box.innerHTML = `<div class="muted scount">${esc(t("search.count",{n:list.length}))}</div>
+      <div class="qlist">${fullShown.map(item).join("")}</div>
+      ${partShown.length?`<div class="muted partial">${esc(t("search.partial"))}</div><div class="qlist">${partShown.map(item).join("")}</div>`:""}
+      ${list.length>F.limit?`<div class="row" style="margin-top:12px"><button type="button" class="btn ghost" id="more">${esc(t("search.more",{n:list.length-F.limit}))}</button></div>`:""}`;
+    box.querySelectorAll(".qitem").forEach(b=>b.onclick=()=>runPractice([S.QM[+b.dataset.id]], t("search.title"), ()=>searchPage(), true));
+    on("#more","click",()=>{ F.limit+=40; renderResults(); });
+  };
+  renderResults();
+  let deb; on("#sq","input",e=>{ F.q=e.target.value; F.limit=40; clearTimeout(deb); deb=setTimeout(renderResults,120);
+    const c=$("#sclear"); if(c) c.style.display=F.q?"":"none"; });
+  on("#sform","submit",e=>{ e.preventDefault(); renderResults(); });
+  on("#sclear","click",()=>{ F.q=""; searchPage(); });
+  on("#bk","click",()=>go("train"));
+  app.querySelectorAll("[data-fl]").forEach(b=>b.onclick=()=>{ const l=+b.dataset.fl; F.laws = F.laws.includes(l)?F.laws.filter(x=>x!==l):F.laws.concat(l); searchPage(); });
+  app.querySelectorAll("[data-fd]").forEach(b=>b.onclick=()=>{ F.diff=b.dataset.fd; searchPage(); });
+  app.querySelectorAll("[data-fs]").forEach(b=>b.onclick=()=>{ F.status=b.dataset.fs; searchPage(); });
+  on("#fnew","click",()=>{ F.nou=!F.nou; searchPage(); });
+  if(focus){ const i=$("#sq"); i.focus(); i.setSelectionRange(i.value.length,i.value.length); }
+  else window.scrollTo(0,0);
+}
+
+/* ---------- resetarea statisticilor de antrenament ---------- */
+function resetDialog(){
+  const wrap=document.createElement("div"); wrap.className="modal"; wrap.setAttribute("role","dialog"); wrap.setAttribute("aria-modal","true"); wrap.setAttribute("aria-labelledby","rdT");
+  wrap.innerHTML = `<div class="sheet"><h2 id="rdT" style="margin-top:0">${esc(t("reset.title"))}</h2>
+    <p class="sub" style="margin-bottom:10px">${esc(t("reset.body"))}</p>
+    <ul class="muted" style="margin:0 0 12px;padding-left:18px;line-height:1.7;font-size:14px"><li>${esc(t("reset.keeps1"))}</li><li>${esc(t("reset.keeps2"))}</li></ul>
+    <div class="checks"><label><input type="checkbox" id="rdFav"> ${esc(t("reset.alsoFavs"))}</label></div>
+    <div class="row" style="margin-top:18px;justify-content:flex-end"><button type="button" class="btn ghost" id="rdNo">${esc(t("reset.cancel"))}</button>
+      <button type="button" class="btn dangerfill" id="rdYes">${esc(t("reset.confirm"))}</button></div></div>`;
+  document.body.appendChild(wrap);
+  const close=()=>wrap.remove();
+  wrap.addEventListener("click",e=>{ if(e.target===wrap) close(); });
+  wrap.addEventListener("keydown",e=>{ if(e.key==="Escape") close(); });
+  wrap.querySelector("#rdNo").onclick=close;
+  wrap.querySelector("#rdNo").focus();
+  wrap.querySelector("#rdYes").onclick=async()=>{
+    const b=wrap.querySelector("#rdYes"); b.disabled=true;
+    try{
+      await must(sb.rpc("reset_my_practice",{p_include_favorites: wrap.querySelector("#rdFav").checked}));
+      await Promise.all([loadHistory(), loadFavorites()]);
+      S.statsOpen=false; close(); toast(t("reset.done")); go("train");
+    }catch(err){ b.disabled=false; toast(errMsg(err), true); }
+  };
 }
 
 function listPage(law){
@@ -586,12 +692,16 @@ function startOfficial(x){
 }
 
 /* ===================== PANOU ADMINISTRATOR / INSTRUCTOR ===================== */
+// asociația afișată: a ta sau (pentru administratorul aplicației) cea pe care o vizualizează, doar citire
+const PA = () => S.viewAssoc || S.association;
+const RO = () => !!S.viewAssoc;
 async function panelPage(sub){
-  const a=S.association;
+  const a=PA();
   const subs=[["members","Membri"],["tests","Teste"],["questions","Întrebări proprii"],["reports","Rapoarte"]];
-  app.innerHTML = `<h1>${esc(a.name)}</h1>
+  app.innerHTML = `${RO()?`<div class="viewbar"><span>👁 Vizualizezi <b>${esc(a.name)}</b> ca administratorul AJF (doar citire)</span><button class="btn ghost sm" id="exitView">← Înapoi la Admin aplicație</button></div>`:""}<h1>${esc(a.name)}</h1>
     <div class="chips" style="margin:10px 0 16px">${subs.map(([k,v])=>`<button class="chip ${sub===k?"on":""}" data-sub="${k}">${v}</button>`).join("")}</div><div id="pbody"><div class="empty">Se încarcă…</div></div>`;
   app.querySelectorAll("[data-sub]").forEach(b=>b.onclick=()=>panelPage(b.dataset.sub));
+  on("#exitView","click",()=>{ S.viewAssoc=null; superPage("stats"); });
   try{
     if(sub==="members") await panelMembers();
     if(sub==="tests") await panelTests();
@@ -600,19 +710,19 @@ async function panelPage(sub){
   }catch(err){ $("#pbody").innerHTML=`<div class="notice err">${esc(errMsg(err))}</div>`; }
 }
 async function fetchMembers(){
-  return must(sb.from("memberships").select("id,user_id,role,status,group_name,created_at,profiles(full_name,email)").eq("association_id",S.association.id).order("created_at"));
+  return must(sb.from("memberships").select("id,user_id,role,status,group_name,created_at,profiles(full_name,email)").eq("association_id",PA().id).order("created_at"));
 }
 // întrebările proprii ale asociației (inclusiv cele preluate deja în bancă)
 async function fetchCustom(){
-  const id=S.association.id;
+  const id=PA().id;
   const rows = await must(sb.from("questions").select(QCOLS).or(`association_id.eq.${id},origin_association_id.eq.${id}`).order("created_at",{ascending:false}));
   S.CQ = rows.map(rowToQ); S.CQM = {}; S.CQ.forEach(q=>S.CQM[q.id]=q);
   return S.CQ;
 }
 async function panelMembers(){
-  const a=S.association, members=await fetchMembers();
+  const a=PA(), members=await fetchMembers();
   const pending=members.filter(m=>m.status==="pending"), approved=members.filter(m=>m.status==="approved");
-  const admin=isAdmin();
+  const admin=!RO() && isAdmin();
   const groups=[...new Set(approved.map(m=>m.group_name).filter(Boolean))];
   $("#pbody").innerHTML = `
     <div class="card"><div class="muted" style="font-size:13px;font-weight:700">Codul pentru arbitri</div>
@@ -630,7 +740,7 @@ async function panelMembers(){
       <td>${admin?`<input data-grp="${m.id}" value="${esc(m.group_name||"")}" placeholder="ex.: Liga 4" list="grpList" style="min-width:110px">`:esc(m.group_name||"—")}</td>
       <td>${admin && m.user_id!==S.user.id?`<button class="btn danger sm" data-rm="${m.id}">Scoate</button>`:""}</td></tr>`).join("")}</table></div>`;
   on("#copyCode","click", async ()=>{ try{ await navigator.clipboard.writeText(a.referee_code); toast("Cod copiat."); }catch(e){ toast("Copiază manual: "+a.referee_code); } });
-  on("#regen","click", async ()=>{ try{ const c=await must(sb.rpc("regenerate_referee_code",{p_assoc:a.id})); S.association.referee_code=c; toast("Cod nou: "+c); panelMembers(); }catch(err){ toast(errMsg(err),true);} });
+  on("#regen","click", async ()=>{ try{ const c=await must(sb.rpc("regenerate_referee_code",{p_assoc:a.id})); PA().referee_code=c; toast("Cod nou: "+c); panelMembers(); }catch(err){ toast(errMsg(err),true);} });
   const upd = async (id, patch, msg)=>{ try{ await must(sb.from("memberships").update(patch).eq("id",id)); toast(msg); }catch(err){ toast(errMsg(err),true); } };
   document.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async()=>{ await upd(b.dataset.ap,{status:"approved"},"Aprobat."); panelMembers(); });
   document.querySelectorAll("[data-rj]").forEach(b=>b.onclick=async()=>{ try{ await must(sb.from("memberships").delete().eq("id",b.dataset.rj)); toast("Cerere respinsă."); panelMembers(); }catch(err){ toast(errMsg(err),true);} });
@@ -654,11 +764,11 @@ async function panelQuestions(){
   $("#pbody").innerHTML = `
     <div class="notice">Întrebările scrise de voi apar <b>doar în testele asociației</b>, nu și în antrenamentul din aplicație.
       Arbitrii le văd abia când încep testul. Administratorul aplicației le poate prelua în banca generală, dacă sunt bune.</div>
-    <div class="row" style="margin:14px 0"><button class="btn" id="newQ">+ Scrie o întrebare nouă</button></div>
+    ${RO()?"":`<div class="row" style="margin:14px 0"><button class="btn" id="newQ">+ Scrie o întrebare nouă</button></div>`}
     <div id="qedit"></div>
     <h2>Întrebările voastre (${list.length})</h2>
     ${list.length ? list.map(q=>`<div class="review"><div class="row">${customStatus(q)}<span class="muted" style="font-size:12px">Legea ${q.l} · ${q.d==="greu"?"Greu":"Mediu"}</span><span class="spacer"></span>
-        ${q.assoc?`<button class="btn ghost sm" data-ed="${q.id}">Editează</button> <button class="btn ghost sm" data-ar="${q.id}">${q.active?"Arhivează":"Reactivează"}</button>`:""}</div>
+        ${q.assoc && !RO()?`<button class="btn ghost sm" data-ed="${q.id}">Editează</button> <button class="btn ghost sm" data-ar="${q.id}">${q.active?"Arhivează":"Reactivează"}</button>`:""}</div>
       <div class="q" style="margin-top:8px">${esc(q.q)}</div><div class="a"><b class="ok">Corect:</b> ${esc(q.o[q.c])}</div></div>`).join("")
       : '<div class="empty">Nu ați scris încă nicio întrebare.</div>'}`;
   on("#newQ","click",()=>questionEditor($("#qedit"), null, ()=>panelQuestions()));
@@ -698,7 +808,7 @@ function questionEditor(box, q, onSaved){
       let id;
       if(q){ await must(sb.from("questions").update(row).eq("id",q.id)); id=q.id; }
       else {
-        const ins = await must(sb.from("questions").insert({...row, association_id:S.association.id, origin_association_id:S.association.id,
+        const ins = await must(sb.from("questions").insert({...row, association_id:PA().id, origin_association_id:PA().id,
           created_by:S.user.id, review_status:"pending"}).select("id").single());
         id = ins.id;
       }
@@ -715,7 +825,7 @@ function newDraft(){
     ids:[], mode:"random", laws:null, onlyNew:false, onlyHard:false, count:10, lawF:"", search:""};
 }
 async function panelTests(){
-  const a=S.association;
+  const a=PA();
   const [tests, members, subs] = await Promise.all([
     must(sb.from("tests").select("*").eq("association_id",a.id).order("created_at",{ascending:false})),
     fetchMembers(), must(sb.from("test_submissions").select("test_id,user_id")), fetchCustom()
@@ -737,10 +847,9 @@ async function panelTests(){
       <button type="button" class="btn ghost" id="addRand">Adaugă aleatoriu</button></div>
       <p class="muted" style="font-size:13px">Disponibile cu aceste filtre: ${pool.length}.</p>`;
   } else if(D.mode==="bank"){
-    const s=D.search.trim().toLowerCase();
-    const res = S.Q.filter(q=>(!D.lawF||q.l===+D.lawF) && (!s||q.q.toLowerCase().includes(s)));
+    const res = runSearch(D.search, q=>!D.lawF||q.l===+D.lawF).results.map(r=>r.q);
     adder = `<div class="grid"><select id="lawF"><option value="">Toate legile</option>${lawsInBank().map(l=>`<option value="${l}" ${+D.lawF===l?"selected":""}>Legea ${l}</option>`).join("")}</select>
-      <input id="srch" placeholder="Caută în enunț…" value="${esc(D.search)}"></div>
+      <input id="srch" type="search" placeholder="Caută: portar 8 secunde, hent roșu, L12…" value="${esc(D.search)}"></div>
       <div class="qlist" style="margin-top:10px;max-height:420px;overflow:auto">${res.slice(0,60).map(q=>`<button type="button" class="qitem" data-add="${q.id}">
         <span class="st ${inB(q.id)?"ok":""}">${inB(q.id)?"✓":"+"}</span><span>${esc(q.q)}<span class="meta">Legea ${q.l} · ${q.d==="greu"?"Greu":"Mediu"}</span></span></button>`).join("")}
         ${res.length>60?`<div class="muted" style="font-size:13px">…și încă ${res.length-60}. Restrânge căutarea.</div>`:""}${!res.length?'<div class="empty">Nicio întrebare găsită.</div>':""}</div>`;
@@ -751,7 +860,7 @@ async function panelTests(){
   }
 
   $("#pbody").innerHTML = `
-    <div class="card"><h3>Test nou</h3>
+    ${RO()?"":`<div class="card"><h3>Test nou</h3>
       <label for="tt">Titlu</label><input id="tt" value="${esc(D.title)}">
       <div class="grid">
         <div><label for="tg">Pentru</label><select id="tg"><option value="">Toți membrii</option>${groups.map(g=>`<option ${D.group===g?"selected":""}>${esc(g)}</option>`).join("")}</select></div>
@@ -770,14 +879,14 @@ async function panelTests(){
         <button type="button" class="chip ${D.mode==="custom"?"on":""}" data-mode="custom">✍️ Întrebări proprii (${custom.length})</button></div>
       ${adder}
       <div class="row" style="margin-top:18px"><button class="btn" id="mk" ${D.ids.length?"":"disabled"}>Creează testul (${D.ids.length} întrebări)</button></div>
-      <p class="muted" style="font-size:13px">Toți arbitrii primesc aceleași întrebări, dar fiecare în altă ordine și cu variantele amestecate.</p></div>
+      <p class="muted" style="font-size:13px">Toți arbitrii primesc aceleași întrebări, dar fiecare în altă ordine și cu variantele amestecate.</p></div>`}
     <h2>Teste trimise</h2>
     ${tests.length?`<div class="tblwrap"><table><tr><th>Test</th><th>Pentru</th><th>Termen</th><th>Completat</th><th></th></tr>
       ${tests.map(t=>{ const target=approved.filter(m=>m.role==="referee" && (!t.group_name||m.group_name===t.group_name)).length;
         const done=subs.filter(s=>s.test_id===t.id).length, own=t.question_ids.filter(id=>S.CQM[id]&&S.CQM[id].assoc).length;
         return `<tr><td><b>${esc(t.title)}</b><div class="muted" style="font-size:12px">${t.question_ids.length} întrebări${own?` (${own} proprii)`:""} · ${t.per_question_seconds}s</div></td>
         <td>${esc(t.group_name||"Toți")}</td><td>${fmtDate(t.due_at)}</td><td>${done}/${target}</td>
-        <td style="white-space:nowrap"><button class="btn ghost sm" data-rep="${t.id}">Raport</button> <button class="btn danger sm" data-del="${t.id}">Șterge</button></td></tr>`;}).join("")}</table></div>`
+        <td style="white-space:nowrap"><button class="btn ghost sm" data-rep="${t.id}">Raport</button>${RO()?"":` <button class="btn danger sm" data-del="${t.id}">Șterge</button>`}</td></tr>`;}).join("")}</table></div>`
       :'<div class="empty">Niciun test încă.</div>'}`;
 
   // păstrăm ce s-a completat, între reafișări
@@ -839,7 +948,7 @@ function worstQuestions(byQ, n){
 const fmtDur = ms => { if(!(ms>0)) return "—"; const s=Math.round(ms/1000); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); };
 
 async function panelReports(){
-  const a=S.association;
+  const a=PA();
   const [tests, members, subs, starts] = await Promise.all([
     must(sb.from("tests").select("*").eq("association_id",a.id).order("created_at",{ascending:false})),
     fetchMembers(), must(sb.from("test_submissions").select("*")), must(sb.from("test_starts").select("*")), fetchCustom()
@@ -897,7 +1006,7 @@ async function superPage(sub){
     S.CQM={}; qs.map(rowToQ).forEach(q=>{ if(q.assoc) S.CQM[q.id]=q; });
     const aname={}; assocs.forEach(a=>aname[a.id]=a.name);
     const pending = qs.map(rowToQ).filter(q=>q.assoc && q.status==="pending" && q.active);
-    const subsTabs=[["assocs","Asociații"],["stats","Statistici"],["review",`Întrebări propuse (${pending.length})`]];
+    const subsTabs=[["assocs","Asociații"],["stats","Statistici"],["review",`Întrebări propuse (${pending.length})`],["misses","Căutări fără rezultat"]];
     let body="";
     if(sub==="assocs"){
       const sec={}; secrets.forEach(s=>sec[s.association_id]=s.admin_code);
@@ -908,10 +1017,11 @@ async function superPage(sub){
         <div style="margin-top:14px"><button class="btn">Creează</button></div></form>
       <div id="newCodes"></div>
       <h2>Asociații (${assocs.length})</h2>
-      ${assocs.length?`<div class="tblwrap"><table><tr><th>Asociație</th><th>Cod arbitri</th><th>Cod administrator</th><th>Membri</th></tr>
+      ${assocs.length?`<div class="tblwrap"><table><tr><th>Asociație</th><th>Cod arbitri</th><th>Cod administrator</th><th>Membri</th><th></th></tr>
         ${assocs.map(a=>{ const ms=members.filter(m=>m.association_id===a.id); return `<tr><td><b>${esc(a.name)}</b><div class="muted" style="font-size:12px">${esc(a.county||"")}</div></td>
           <td><code>${esc(a.referee_code)}</code></td><td><code>${esc(sec[a.id]||"—")}</code></td>
-          <td>${ms.filter(m=>m.status==="approved").length} <span class="muted">(+${ms.filter(m=>m.status==="pending").length} în așteptare)</span></td></tr>`;}).join("")}</table></div>`
+          <td>${ms.filter(m=>m.status==="approved").length} <span class="muted">(+${ms.filter(m=>m.status==="pending").length} în așteptare)</span></td>
+          <td><button class="btn ghost sm" data-view="${a.id}">Vezi ca AJF</button></td></tr>`;}).join("")}</table></div>`
         :'<div class="empty">Nicio asociație încă.</div>'}`;
     }
     if(sub==="stats"){
@@ -935,9 +1045,9 @@ async function superPage(sub){
           <div class="card"><div class="muted" style="font-size:13px">Teste rezolvate · media</div><div style="font-size:28px;font-weight:800">${subs.length} · <span class="${pctCls(allAvg)}">${allAvg}%</span></div></div></div>
         <h2>Pe asociații</h2>
         ${rows.length?`<div class="tblwrap"><table><tr><th>Asociație</th><th>Arbitri</th><th>Teste</th><th>Rezolvate</th><th>Participare</th><th>Media</th><th>Ultima activitate</th></tr>
-          ${rows.map(r=>`<tr><td><b>${esc(r.a.name)}</b><div class="muted" style="font-size:12px">${r.staff} instructori/admini</div></td><td>${r.ref}</td><td>${r.tests}</td><td>${r.subs}</td>
+          ${rows.map(r=>`<tr><td><button class="linkbtn" data-view="${r.a.id}"><b>${esc(r.a.name)}</b> →</button><div class="muted" style="font-size:12px">${r.staff} instructori/admini</div></td><td>${r.ref}</td><td>${r.tests}</td><td>${r.subs}</td>
             <td>${r.part===null?"—":r.part+"%"}</td><td class="${r.avg===null?"":pctCls(r.avg)}"><b>${r.avg===null?"—":r.avg+"%"}</b></td><td class="muted">${fmtDate(r.last)}</td></tr>`).join("")}</table></div>
-          <p class="muted" style="font-size:12.5px">Participare = teste rezolvate ÷ (teste create × arbitri). Arată cât de activ e județul.</p>`:'<div class="empty">Nicio asociație încă.</div>'}
+          <p class="muted" style="font-size:12.5px">Participare = teste rezolvate ÷ (teste create × arbitri). Arată cât de activ e județul. Apasă pe numele unei asociații ca să vezi rapoartele ei exact cum le vede administratorul AJF.</p>`:'<div class="empty">Nicio asociație încă.</div>'}
         <h2>Pe legi (toate asociațiile)</h2>${lawBars(byLaw)}
         <h2>Cele mai greșite întrebări (toate asociațiile)</h2>${worstQuestions(byQ,10)}`;
     }
@@ -951,9 +1061,21 @@ async function superPage(sub){
           <div class="row" style="margin-top:10px"><button class="btn sm" data-appr="${q.id}">Adaugă în aplicație</button><button class="btn danger sm" data-rej="${q.id}">Respinge</button></div></div>`).join("")
           : '<div class="empty">Nicio întrebare nouă de verificat.</div>'}`;
     }
+    if(sub==="misses"){
+      let rows=[]; try{ rows = await must(sb.from("search_misses").select("query,created_at").order("created_at",{ascending:false}).limit(1000)); }catch(e){ rows=null; }
+      if(rows===null) body = '<div class="notice warn">Rulează mai întâi <code>06_cautare_resetare.sql</code> în Supabase.</div>';
+      else {
+        const g={}; rows.forEach(r=>{ const k=FluierSearch.normalize(r.query); const x=g[k]||(g[k]={q:r.query,n:0,last:r.created_at}); x.n++; });
+        const list=Object.values(g).sort((a,b)=>b.n-a.n || (a.last<b.last?1:-1));
+        body = `<p class="sub">Ce au căutat arbitrii și n-au găsit. Sunt cele mai bune idei pentru întrebări noi.</p>
+          ${list.length?`<div class="tblwrap"><table><tr><th>Căutare</th><th>De câte ori</th><th>Ultima dată</th></tr>${list.slice(0,200).map(x=>`<tr><td>${esc(x.q)}</td><td>${x.n}</td><td class="muted">${fmtDate(x.last)}</td></tr>`).join("")}</table></div>`
+            :'<div class="empty">Nicio căutare ratată încă.</div>'}`;
+      }
+    }
     app.innerHTML = `<h1>Admin aplicație</h1>
       <div class="chips" style="margin:10px 0 16px">${subsTabs.map(([k,v])=>`<button class="chip ${sub===k?"on":""}" data-ss="${k}">${esc(v)}</button>`).join("")}</div>${body}`;
     app.querySelectorAll("[data-ss]").forEach(b=>b.onclick=()=>superPage(b.dataset.ss));
+    app.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>{ S.viewAssoc = assocs.find(a=>a.id===b.dataset.view); window.scrollTo(0,0); panelPage("reports"); });
     on("#newA","submit", async e=>{ e.preventDefault();
       try{ const r=await must(sb.rpc("create_association",{p_name:$("#an").value.trim(), p_county:$("#ac").value.trim()||null}));
         await superPage("assocs");

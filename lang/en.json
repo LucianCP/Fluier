@@ -8,8 +8,15 @@
     "law": "Law {n}",
     "lawNamed": "Law {n} · {name}"
   },
-  "roles": { "referee": "Referee", "instructor": "Instructor", "admin": "Administrator" },
-  "difficulty": { "mediu": "Medium", "greu": "Hard" },
+  "roles": {
+    "referee": "Referee",
+    "instructor": "Instructor",
+    "admin": "Administrator"
+  },
+  "difficulty": {
+    "mediu": "Medium",
+    "greu": "Hard"
+  },
   "errors": {
     "invalidLogin": "Wrong email or password.",
     "emailNotConfirmed": "Please confirm your email address (check your inbox), then sign in.",
@@ -56,7 +63,8 @@
     "profile": "My profile",
     "subscription": "Subscription",
     "logout": "Sign out",
-    "language": "Language"
+    "language": "Language",
+    "resetStats": "Reset training statistics"
   },
   "tabs": {
     "train": "Training",
@@ -183,5 +191,38 @@
     "sendFailed": "The test could not be submitted.",
     "sendFailedHint": "Do not close this page: your answers are still here.",
     "retry": "Try again"
+  },
+  "search": {
+    "title": "Search questions",
+    "label": "Search for a question",
+    "placeholder": "Search: goalkeeper 8 seconds, handball red, offside throw-in…",
+    "hint": "Accents and small typos are fine. Synonyms work too, plus shortcuts: “law 12”, “L14”, “#new”, “#hard”.",
+    "clear": "Clear search",
+    "law": "Law",
+    "level": "Level",
+    "any": "Any",
+    "onlyNew": "New only",
+    "status": "Status",
+    "stAll": "All",
+    "stTodo": "Not answered",
+    "stWrong": "Wrong",
+    "stRight": "Correct",
+    "stFav": "★ Favourites",
+    "count": "{n} questions found",
+    "partial": "Partial matches (not all words)",
+    "more": "Show more ({n})",
+    "none": "No questions found.",
+    "noneHint": "Try other words or remove some filters.",
+    "foundIn": "found in the options or explanations"
+  },
+  "reset": {
+    "title": "Reset your training statistics?",
+    "body": "All your practice answers will be deleted so you can start over with fresh statistics.",
+    "keeps1": "Official committee test results are NOT deleted.",
+    "keeps2": "This cannot be undone.",
+    "alsoFavs": "Also delete my favourite questions",
+    "cancel": "Cancel",
+    "confirm": "Yes, reset",
+    "done": "Your statistics have been reset."
   }
 }

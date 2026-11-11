@@ -7,8 +7,15 @@
     "law": "Legea {n}",
     "lawNamed": "Legea {n} · {name}"
   },
-  "roles": { "referee": "Arbitru", "instructor": "Instructor", "admin": "Administrator" },
-  "difficulty": { "mediu": "Mediu", "greu": "Greu" },
+  "roles": {
+    "referee": "Arbitru",
+    "instructor": "Instructor",
+    "admin": "Administrator"
+  },
+  "difficulty": {
+    "mediu": "Mediu",
+    "greu": "Greu"
+  },
   "errors": {
     "invalidLogin": "Email sau parolă greșită.",
     "emailNotConfirmed": "Confirmă-ți adresa de email (verifică inboxul), apoi autentifică-te.",
@@ -55,7 +62,8 @@
     "profile": "Profilul meu",
     "subscription": "Abonament",
     "logout": "Ieși din cont",
-    "language": "Limba"
+    "language": "Limba",
+    "resetStats": "Resetează statisticile de antrenament"
   },
   "tabs": {
     "train": "Antrenament",
@@ -182,5 +190,38 @@
     "sendFailed": "Testul nu a putut fi trimis.",
     "sendFailedHint": "Nu închide pagina: răspunsurile tale sunt încă aici.",
     "retry": "Încearcă din nou"
+  },
+  "search": {
+    "title": "Caută întrebări",
+    "label": "Caută o întrebare",
+    "placeholder": "Caută: portar 8 secunde, hent roșu, ofsaid aruncare…",
+    "hint": "Poți scrie cu sau fără diacritice și chiar cu greșeli. Merg și sinonime (penalty, galben, roșu, out) și scurtături: „legea 12”, „L14”, „#nou”, „#greu”.",
+    "clear": "Șterge căutarea",
+    "law": "Legea",
+    "level": "Nivel",
+    "any": "Oricare",
+    "onlyNew": "Doar noi",
+    "status": "Status",
+    "stAll": "Toate",
+    "stTodo": "Nerezolvate",
+    "stWrong": "Greșite",
+    "stRight": "Corecte",
+    "stFav": "★ Favorite",
+    "count": "{n} întrebări găsite",
+    "partial": "Potriviri parțiale (nu conțin toate cuvintele)",
+    "more": "Arată mai multe ({n})",
+    "none": "N-am găsit nicio întrebare.",
+    "noneHint": "Încearcă alte cuvinte sau scoate din filtre. Căutarea ta ne ajută să adăugăm întrebările care lipsesc.",
+    "foundIn": "găsit în variante sau explicații"
+  },
+  "reset": {
+    "title": "Resetezi statisticile de antrenament?",
+    "body": "Toate răspunsurile tale de antrenament se șterg și poți relua întrebările de la zero, cu statistici noi.",
+    "keeps1": "Rezultatele testelor oficiale de la asociație NU se șterg.",
+    "keeps2": "Acțiunea nu poate fi anulată.",
+    "alsoFavs": "Șterge și întrebările favorite",
+    "cancel": "Anulează",
+    "confirm": "Da, resetează",
+    "done": "Statisticile au fost resetate. Spor la treabă!"
   }
 }
